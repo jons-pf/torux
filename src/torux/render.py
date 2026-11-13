@@ -103,7 +103,7 @@ PALETTES = {
         plasma=dict(mode="veil", body="#3fd1b0", body_gain=0.42, body_strength=5.0, indirect=0.0),
         channels=dict(
             plasma=dict(index=0, colour="#0e8a72", gain=0.92, strength=3.0, mode="veil"),
-            threads=dict(index=1, colour="#3e4651", gain=0.72, strength=2.8, mode="veil"),
+            threads=dict(index=1, colour="#59636e", gain=0.5, strength=2.0, mode="veil"),
             tubes=dict(index=2, colour="#0b7d66", gain=0.95, strength=2.2, mode="veil"),
             points=dict(index=3, colour="#0e8a72", gain=0.95, strength=3.0, mode="veil"),
             greys=dict(index=4, colour="#3e4651", gain=0.6, strength=2.5, mode="veil"),
@@ -123,7 +123,7 @@ PALETTES = {
         channels=dict(
             plasma=dict(index=0, colour="#1fe0b4", gain=1.3, strength=0.75, mode="emit", hot="#9ff7dc",
                         hot_gain=0.22, hot_from=1.4),
-            threads=dict(index=1, colour="#b5bfcc", gain=0.75, strength=1.8, mode="emit"),
+            threads=dict(index=1, colour="#b5bfcc", gain=0.5, strength=1.5, mode="emit"),
             tubes=dict(index=2, colour="#1fe0b4", gain=1.4, strength=0.9, mode="emit", hot="#9ff7dc",
                        hot_gain=0.3, hot_from=1.2),
             points=dict(index=3, colour="#1fe0b4", gain=1.3, strength=0.9, mode="emit", hot="#9ff7dc",
