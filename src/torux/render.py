@@ -806,6 +806,8 @@ ISLANDS = dict(
     halves=1e-4,           # its rotation numbers over the two halves of them agree this well: not chaos
     rational=2e-5,         # and within this of a fraction of order 40 or less: locked to an island chain
     sections=256,          # periods of the last surface's line that give the glow's sections and the rings
+    core=0.4,              # the nested surfaces inside the chain at this share of a surface's brightness: the
+                           # islands round them are the picture's subject
 )
 
 
@@ -878,10 +880,13 @@ def _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_o
         dense = tr.dense(st_last[:need], ph_last[:need], per_turn)
         piece = int(round(Ls["outer_transits"] * per_turn))
         n_pieces = min(n_out, (len(dense) - 1) // piece)
+        first = len(out["fibres"])
         for k in range(n_pieces):
             out["fibres"].append(_fibre(dense[k * piece:(k + 1) * piece + 1], per_turn, rng,
                                         rng.uniform(*P["outer_brightness"])))
         kept_inner = _inner_lines(tr, a, seeds[last], phi_s, n_out, per_turn, rng, out)
+        out["fibres"][first:] = [None if f is None else (f[0], f[1], f[2] * ISLANDS["core"], f[3])
+                                 for f in out["fibres"][first:]]
         if CUT > 0:
             pick = sorted(set(np.round(np.linspace(0, len(surf) - 1, min(_ring_count(out), len(surf)))).astype(int)))
             for j in pick:
@@ -940,7 +945,8 @@ def _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_o
                      f"{count['island']} locked to the chain, {count['other']} to other chains, {count['chaos']} "
                      f"chaotic, {count['lost']} that left",
                      f"inside the chain, the last of them on a surface drawn as {n_pieces} pieces of "
-                     f"{Ls['outer_transits']} turns, {kept_inner} more lines inside it, and a glow filling it",
+                     f"{Ls['outer_transits']} turns and {kept_inner} more lines inside it, at {ISLANDS['core']:g} of a "
+                     f"surface's brightness, and a glow filling it",
                      f"the islands: the {len(keep)} lines locked to the chain before the elliptic point as {strands} "
                      f"strands of one closure ({T} field periods) each, started where their returns to the island lie "
                      f"evenly round its centre (no gap between returns wider than {math.degrees(gap):.0f} degrees), "
