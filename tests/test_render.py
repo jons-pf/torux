@@ -177,6 +177,26 @@ def test_a_small_picture_is_the_page_outside_the_machine_and_never_red(solved_95
         assert np.array_equal(PT.read_png(p), img)
 
 
+def test_a_wide_chains_lines_are_told_apart_by_their_rotation():
+    """Punctures a field period apart: on a circle round the axis at an irrational rotation, a surface. Round one of
+    six elliptic points, hopping a sixth of a turn each period, an island of a q = 6 chain. Steps at random, chaos.
+    A line that left, lost."""
+    K = 1024
+    k = np.arange(K + 1)
+    ring = np.column_stack([np.cos(2 * np.pi * 0.0618034 * k), np.sin(2 * np.pi * 0.0618034 * k)])
+    hop = -2 * np.pi * k / 6
+    island = np.column_stack([np.cos(hop), np.sin(hop)]) + 0.2 * np.column_stack(
+        [np.cos(2 * np.pi * 0.0377 * k), np.sin(2 * np.pi * 0.0377 * k)])
+    ang = np.cumsum(np.random.default_rng(3).uniform(0.0, 1.0, K + 1))
+    chaos = np.column_stack([np.cos(ang), np.sin(ang)])
+    c = np.zeros(2)
+    assert RD._island_kind(ring, 1, c, True, 6)[0] == "surface"
+    kind, rho = RD._island_kind(island, 1, c, True, 6)
+    assert kind == "island" and abs(rho + 1 / 6) < 1e-6
+    assert RD._island_kind(chaos, 1, c, True, 6)[0] == "chaos"
+    assert RD._island_kind(ring, 1, c, False, 6)[0] == "lost"
+
+
 def test_png_files_read_back_as_written(tmp_path):
     rng = np.random.default_rng(1)
     img = rng.integers(0, 256, (37, 53, 3)).astype(np.uint8)
@@ -220,6 +240,39 @@ def test_an_island_chain_is_drawn_where_the_certificate_puts_it(tmp_path):
     for dark in (False, True):
         img = PT.read_png(a.render(tmp_path / f"i{int(dark)}.png", dark=dark))
         assert _check_page(img, dark) > 2000
+
+
+@pytest.mark.slow
+def test_a_wide_island_chain_is_drawn_at_its_true_width(tmp_path):
+    """QUASR 797878: the requested flux falls inside an island chain some 30 pixels wide at README size. The lines
+    from the axis to its elliptic point weave the core where they lie on surfaces and the islands where they are
+    locked to the chain: every strand runs along the field, where the islands' strands cross the certificate's plane
+    they lie round its elliptic points, inside the chain, and the elliptic lines pass through those points."""
+    try:
+        src = torux.load("quasr:797878")
+    except ConnectionError as e:
+        pytest.skip(f"QUASR 797878 is not in the cache and cannot be downloaded: {e}")
+    a = torux.solve(src, budget_s=3300)
+    c = (a.evidence or {}).get("certificate") or {}
+    if a.status != "no_surface" or not str(c.get("kind", "")).startswith("island"):
+        pytest.skip(f"{a.status} ({c.get('kind')}) after {a.wall_s:.0f} s on this machine")
+    d = RD.content(a)
+    isl, plasma = _lines_of(d, "islands"), _lines_of(d, "plasma")
+    assert len(isl) >= 24 and len(plasma) >= 12 and not _lines_of(d, "tubes")
+    assert max(_along(a, ln) for ln in isl[::max(1, len(isl) // 40)]) < 2e-3
+    assert max(_along(a, ln) for ln in plasma[:20]) < 1e-3
+    O = np.asarray(c["O_line"]["points"], float)
+    X = np.asarray(c["X_line"]["points"], float)
+    reach = np.array([np.min(np.hypot(*(X - o).T)) for o in O])          # each elliptic point to its nearest X
+    cross = np.concatenate([_crossings(ln, float(c.get("phi_s", 0.0))) for ln in isl])
+    near = np.hypot(cross[:, None, 0] - O[None, :, 0], cross[:, None, 1] - O[None, :, 1])
+    k = np.argmin(near, axis=1)
+    assert np.all(near[np.arange(len(cross)), k] < reach[k])
+    for o in O:                                              # every elliptic point on an elliptic line
+        assert np.min(np.hypot(*(cross - o).T)) < 1e-6
+    for dark in (False, True):
+        img = PT.read_png(a.render(tmp_path / f"w{int(dark)}.png", dark=dark))
+        assert _check_page(img, dark) > 5000
 
 
 @pytest.mark.slow
