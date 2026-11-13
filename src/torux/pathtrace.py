@@ -1342,13 +1342,6 @@ def composite(buf, scene, pal, rows, cols, pool=None):
     return img
 
 
-def downsample(img, f):
-    if f == 1:
-        return img
-    H, W = img.shape[0] // f * f, img.shape[1] // f * f
-    return img[:H, :W].reshape(H // f, f, W // f, f, img.shape[2]).mean(axis=(1, 3))
-
-
 def to8(lin_img):
     return (lin_to_srgb(lin_img) * 255 + 0.5).astype(np.uint8)
 
