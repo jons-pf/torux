@@ -162,10 +162,12 @@ def test_render_wants_a_png_and_an_answer_that_holds_its_source(solved_954, tmp_
 
 
 def test_a_small_picture_is_the_page_outside_the_machine_and_never_red(solved_954, tmp_path):
-    """The whole path at a small size and few samples: both pages, written and read back."""
+    """The whole path at a small size and the README's own samples per pixel: both pages, written and read back.
+    (Light that bounced from coil to coil several times is copper on copper, a deep rust: with a few dozen samples a
+    pixel can be mostly that, and read as red.)"""
     a = copy.copy(solved_954)
     a.__dict__.pop("_render", None)
-    pics = RD.picture(a, width=160, spp=6)
+    pics = RD.picture(a, width=160, spp=RD.SPP)
     for dark in (False, True):
         img = pics[dark]
         assert img.shape[1] == 160 and img.dtype == np.uint8
