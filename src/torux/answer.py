@@ -313,6 +313,14 @@ class Answer(Result):
         from .plot import plot
         return plot(self, path, dark=dark)
 
+    def render(self, path, *, dark=False):
+        """The answer as one picture in the look of torux's README hero, path traced: minutes where plot takes
+        seconds.  The coils in copper and, in light, the surface woven from its field lines, or where there is no
+        surface the certificate: the island chain, or the field lines leaving beyond the last surface.  ``path`` a
+        .png file, whose path is returned.  ``dark=True`` for a dark page.  torux.render says what each mark is."""
+        from .render import render
+        return render(self, path, dark=dark)
+
     def boozer(self):
         """|B| on the surface in Boozer angles: its harmonics in tesla and its quasi-symmetry (a
         torux.boozer.Boozer)."""

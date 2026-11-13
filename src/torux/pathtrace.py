@@ -81,6 +81,20 @@ def section_mesh(X):
     return np.concatenate([A, B])
 
 
+def tube_mesh(X):
+    """A closed triangle mesh through points X (nphi, ntheta, 3) on a torus opened at its first and last sections:
+    rows along it, columns round each section (periodic), each end closed by a fan from its centroid."""
+    i1 = np.roll(X, -1, axis=1)
+    j0, j1 = X[1:], i1[1:]
+    A = np.stack([X[:-1], i1[:-1], j1], 2).reshape(-1, 3, 3)
+    B = np.stack([X[:-1], j1, j0], 2).reshape(-1, 3, 3)
+    caps = []
+    for S in (X[0], X[-1]):
+        c = np.broadcast_to(S.mean(axis=0), S.shape)
+        caps.append(np.stack([c, S, np.roll(S, -1, axis=0)], 1))
+    return np.concatenate([A, B] + caps)
+
+
 def section_samples(R, Z, phi, shells):
     """Points filling a torus given by its sections R, Z (nphi, ntheta) at angles phi, with weights summing to its
     volume (m^3): each section's points pulled towards its centroid on ``shells`` shells.  The sources of the
@@ -1353,7 +1367,7 @@ def write_png(path, img):
     with open(path, "wb") as fh:
         fh.write(b"\x89PNG\r\n\x1a\n")
         fh.write(chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)))
-        fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 9)))
+        fh.write(chunk(b"IDAT", zlib.compress(raw.tobytes(), 6)))
         fh.write(chunk(b"IEND", b""))
 
 
