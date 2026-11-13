@@ -48,7 +48,7 @@ SPP = 192                  # samples per pixel where anything stands (fewer on t
 ELEVATION = 40.0           # degrees: the camera looks down on the machine at this angle
 FIT = (4.6, 3.5)           # the machine is scaled to this width (or height) in the drawing's units
 MARGIN = (0.05, 0.06)      # the picture's margin round the machine, of its width and height
-CUT = 40.0                 # degrees of the plasma cut away in front of the cross-section the picture opens
+CUT = 40.0                 # degrees of the plasma cut away in front of the cross-section the picture opens (0: none)
 WIDE = 2.0 / 3.0           # the section it opens is at least this share of the plasma's widest
 SECTION = dict(rings=(2, 6), px_per_ring=14, periods=160)   # the lines whose punctures show in it: two to six,
                                                              # one for each 14 pixels of the section at README size
@@ -207,6 +207,8 @@ def content(answer, log=None):
         _edge(answer, src, cert, out, log)
     else:
         out["about"].append(f"no plasma: the answer is {st!r}, which holds no surface or certificate to draw")
+    if CUT <= 0:
+        out["dots"] = []                         # the cut is off: the plasma closed, no section opened
     if out["dots"]:
         n = sum(len(d[0]) for d in out["dots"])
         out["about"].append(f"the plasma cut away over {CUT:g} degrees in front of its cross-section at phi = "
@@ -671,16 +673,20 @@ def _surface(answer, src, out, log):
     kept = _inner_lines(tr, ax, edge, phi0, n_out, per_turn, rng, out)
     # the cut: the surface's own punctures (a field line's angle advances by iota 2 pi / nfp a period, and the torus
     # is the same in every period) and the nested surfaces' from lines of their own
-    m = np.arange(SECTION["periods"])
-    xc = _torus_points(T, iota * 2 * math.pi / nfp * m, np.full(len(m), out["cut"][0]))
-    out["dots"].append((np.column_stack([np.hypot(xc[:, 0], xc[:, 1]), xc[:, 2]]), "points", 1.0))
-    rings = _section_lines(tr, ax, edge, phi0, out["cut"][0], out)
+    rings = 0
+    if CUT > 0:
+        m = np.arange(SECTION["periods"])
+        xc = _torus_points(T, iota * 2 * math.pi / nfp * m, np.full(len(m), out["cut"][0]))
+        out["dots"].append((np.column_stack([np.hypot(xc[:, 0], xc[:, 1]), xc[:, 2]]), "points", 1.0))
+        rings = _section_lines(tr, ax, edge, phi0, out["cut"][0], out)
     out["about"] += [f"the verified surface at {abs(float(T.flux)):.6g} Wb (iota {iota:.6g}) as {n_out} of its field "
                      f"lines, {Ls['outer_transits']} turns each, from its own coefficients",
                      f"{kept} lines traced in the source's field from between {where} and the surface's outboard "
                      f"point: the nested surfaces",
-                     f"in the cut, the surface's own punctures from its coefficients and {rings} more lines' punctures",
                      "a glow filling the verified surface"]
+    if CUT > 0:
+        out["about"].append(f"in the cut, the surface's own punctures from its coefficients and {rings} more lines' "
+                            f"punctures")
 
 
 # ---------------------------------------------------------------------------- an island chain
