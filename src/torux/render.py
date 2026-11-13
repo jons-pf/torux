@@ -13,10 +13,15 @@ One picture and nothing else: no axes, no scale, no words.  Everything drawn com
     a range's outermost torus)            field-line angle), the nested surfaces inside it as fainter lines traced in
                                           the source's field from between the magnetic axis and the surface, and a
                                           faint glow filling it
-    no surface: an island band         -> the island chain the certificate names, where it is: its elliptic closed
-                                          field lines (the islands' centres), traced from the certificate's own points,
-                                          as tubes of light winding round the magnetic axis, the only lines drawn, and
-                                          a glow filling the chain
+    no surface: an island band         -> the island chain the certificate names, where it is.  As wide as ISLAND_PX
+                                          at README size or wider, at its true width, from lines traced from the
+                                          magnetic axis to the chain's elliptic point and told by their rotation: those
+                                          locked to the chain weave its islands round the elliptic lines at their
+                                          centres, those on surfaces round the axis weave the nested surfaces inside
+                                          it, with a glow.  Thinner: its elliptic closed field lines (the islands'
+                                          centres), traced from the certificate's own points, as tubes of light
+                                          winding round the magnetic axis, the only lines drawn, and a glow filling
+                                          the chain
     no surface: beyond the edge        -> field lines traced from the magnetic axis outwards: those on surfaces round
                                           it as light up to the last of them, and a haze of lines started where the
                                           certificate rules out any surface, each followed until it leaves the machine
@@ -25,8 +30,8 @@ One picture and nothing else: no axes, no scale, no words.  Everything drawn com
 
 Where there is a plasma, a wedge of it is cut away in front of one cross-section, and in that section the punctures
 of field lines through it show as points of light: the nested surfaces as rings, the island chain as its elliptic
-points, the chaotic edge as a scatter.  Each point is a traced line's crossing of the plane or of a plane the
-source's field periods make the same, turned into it.
+points (a wide one's islands as closed curves round them), the chaotic edge as a scatter.  Each point is a traced
+line's crossing of the plane or of a plane the source's field periods make the same, turned into it.
 
 Plasma is never drawn solid: only light and fibres.  The widths of coils, fibres, tubes and points are a drawing's,
 not data.  The machine is turned about its own axis to the view that frames it widest while opening a wide section.
@@ -49,6 +54,7 @@ ELEVATION = 40.0           # degrees: the camera looks down on the machine at th
 FIT = (4.6, 3.5)           # the machine is scaled to this width (or height) in the drawing's units
 MARGIN = (0.05, 0.06)      # the picture's margin round the machine, of its width and height
 CUT = 40.0                 # degrees of the plasma cut away in front of the cross-section the picture opens (0: none)
+ISLAND_PX = 6.0            # an island chain this many pixels wide at README size or more is drawn at its true width
 WIDE = 2.0 / 3.0           # the section it opens is at least this share of the plasma's widest
 SECTION = dict(rings=(2, 6), px_per_ring=14, periods=160)   # the lines whose punctures show in it: two to six,
                                                              # one for each 14 pixels of the section at README size
@@ -91,6 +97,7 @@ CHANNELS = {
     "points": dict(index=3, radius=0.0030, halo=0.25, sigma=0.004),
     "greys": dict(index=4, radius=0.0025, halo=0.0, sigma=0.0),
     "beads": dict(index=5, radius=0.0050, halo=0.35, sigma=0.004),
+    "islands": dict(index=6, radius=0.0025, halo=0.25, sigma=0.004),
 }
 PALETTES = {
     False: dict(
@@ -107,8 +114,9 @@ PALETTES = {
             tubes=dict(index=2, colour="#0b7d66", gain=0.95, strength=2.2, mode="veil"),
             points=dict(index=3, colour="#0e8a72", gain=0.95, strength=3.0, mode="veil"),
             greys=dict(index=4, colour="#3e4651", gain=0.6, strength=2.5, mode="veil"),
-            beads=dict(index=5, colour="#086553", gain=1.0, strength=2.5, mode="veil")),
-        channel_order=("threads", "greys", "glow", "plasma", "points", "tubes", "beads"),
+            beads=dict(index=5, colour="#086553", gain=1.0, strength=2.5, mode="veil"),
+            islands=dict(index=6, colour="#0b7d66", gain=0.95, strength=3.0, mode="veil")),
+        channel_order=("threads", "greys", "glow", "plasma", "points", "islands", "tubes", "beads"),
     ),
     True: dict(
         bg="#0d1117",
@@ -130,8 +138,10 @@ PALETTES = {
                         hot_gain=0.22, hot_from=1.4),
             greys=dict(index=4, colour="#b5bfcc", gain=0.6, strength=1.5, mode="emit"),
             beads=dict(index=5, colour="#1fe0b4", gain=1.6, strength=1.0, mode="emit", hot="#c8fbeb",
-                       hot_gain=0.45, hot_from=1.0)),
-        channel_order=("threads", "greys", "glow", "plasma", "points", "tubes", "beads"),
+                       hot_gain=0.45, hot_from=1.0),
+            islands=dict(index=6, colour="#1fe0b4", gain=1.45, strength=0.85, mode="emit", hot="#c8fbeb",
+                         hot_gain=0.3, hot_from=1.2)),
+        channel_order=("threads", "greys", "glow", "plasma", "points", "islands", "tubes", "beads"),
     ),
 }
 
@@ -753,6 +763,10 @@ def _islands(answer, src, cert, out, log):
     out["scale"] = scale
     perimeter = float(np.mean([_perimeter(Rg[j], Zg[j]) for j in range(0, len(Rg), max(1, len(Rg) // 16))]))
     n_out = _outer_count(scale, perimeter)
+    width = _band_width(cert, O, a) * scale * README_WIDTH / (FIT[0] * (1 + 2 * MARGIN[0]))
+    if width >= ISLAND_PX:
+        _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_out, width)
+        return
     # the tubes: each loop of the chain's elliptic lines, closed
     for chain in o_loops:
         seg = [tr.dense(*o_pieces[k][:2], per_turn) for k in chain]
@@ -773,6 +787,168 @@ def _islands(answer, src, cert, out, log):
                      f"the only lines drawn round the machine, so that nothing is taken for them",
                      f"a glow filling the chain: its section at each angle through its {m} closed lines there"]
     del n_out
+
+
+def _band_width(cert, O, a):
+    """The island chain's radial width (m): the certificate's band of fluxes (between its separatrices) as radii
+    about the axis, on the chain's own distance from it."""
+    lo, hi = (cert.get("interval") or [None, None])[:2]
+    if lo is None or not hi or hi <= lo:
+        return 0.0
+    r = float(np.mean(np.hypot(*(O - a).T)))
+    mid = 0.5 * (lo + hi)
+    return r * (math.sqrt(hi / mid) - math.sqrt(lo / mid))
+
+
+ISLANDS = dict(
+    ray=24,                # lines from the axis to the chain's outboard elliptic point, evenly spaced, the last on it
+    periods=1024,          # each followed this many field periods (at least 64 turns)
+    halves=1e-4,           # its rotation numbers over the two halves of them agree this well: not chaos
+    rational=2e-5,         # and within this of a fraction of order 40 or less: locked to an island chain
+    sections=256,          # periods of the last surface's line that give the glow's sections and the rings
+)
+
+
+def _island_kind(st, steps, centre, whole, q):
+    """For the wide chain's lines, followed ISLANDS['periods'] field periods: 'surface' for a line on a torus round
+    the axis (its rotation the same over both halves, not a rational of order at most 40), 'island' for one locked to
+    the chain's rotation (a multiple of 1 / q), 'chaos' for one whose rotation differs between the halves, 'other'
+    for a regular line locked to another rational, 'lost' for one that left. And its rotation number."""
+    if not whole:
+        return "lost", np.nan
+    rho, r1, r2 = _rotation(st[::steps], centre)
+    if not abs(r1 - r2) < ISLANDS["halves"]:
+        return "chaos", rho
+    if abs(rho * q - round(rho * q)) / q < ISLANDS["rational"]:
+        return "island", rho
+    qs = np.arange(1, 41)
+    if np.min(np.abs(rho * qs - np.round(rho * qs)) / qs) < ISLANDS["rational"]:
+        return "other", rho
+    return "surface", rho
+
+
+def _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_out, width):
+    """An island chain wide enough to see, at its true width.  Lines traced from the magnetic axis to the chain's
+    outboard elliptic point, each told by its rotation numbers: those on surfaces round the axis give the nested
+    surfaces inside the chain (woven light, a glow filling them, rings in the cut), those locked to the chain's
+    rotation weave its islands (strands along each island's tube, closed curves round its centre in the cut), and
+    the elliptic lines run at the islands' centres."""
+    from scipy.spatial import cKDTree
+    from math import gcd
+    p, q = int(cert["chain"]["p"]), int(cert["chain"]["q"])
+    nfp = tr.nfp
+    per_turn = STYLE["lines"]["points_per_transit"]
+    Ls = STYLE["lines"]
+    P = STYLE["plasma"]
+    sol = out["solids"]
+    cp = np.concatenate([qq for qq, _ in sol["paths"]]) if sol["paths"] else _solid_points(sol)
+    tree = cKDTree(cp)
+    Rc = np.hypot(cp[:, 0], cp[:, 1])
+    box = (Rc.min(), Rc.max(), cp[:, 2].min(), cp[:, 2].max())
+    near = 2.0 * STYLE["coil_radius"] / out["scale"]
+
+    def stop(states, phis):
+        R, Z = states[:, 0], states[:, 1]
+        x = np.stack([R * np.cos(phis), R * np.sin(phis), Z], -1)
+        d, _ = tree.query(x)
+        return (d < near) | (R < box[0]) | (R > box[1]) | (Z < box[2]) | (Z > box[3])
+
+    K = max(ISLANDS["periods"], 64 * nfp)
+    Ks = ISLANDS["sections"] * tr.steps + 1                 # the first periods of a line, for its sections and rings
+    # the core: lines from the axis towards the chain's outboard elliptic point, the last on a surface inside it
+    k0 = int(np.argmax(O[:, 0]))
+    o0 = O[k0]
+    t = (np.arange(ISLANDS["ray"]) + 1) / ISLANDS["ray"]
+    seeds = a + np.outer(t, o0 - a)
+    lines = tr.trace(seeds, phi_s, K, stop=stop)
+    kinds = [_island_kind(st, tr.steps, a, whole, q) for st, _, whole in lines]
+    if log:
+        log("  islands: the ray's lines: " + " ".join(k[0][0] for k in kinds))
+    surf = [k for k, (kind, _) in enumerate(kinds) if kind == "surface"]
+    rng = np.random.default_rng(Ls["seed"])
+    rings_drawn, kept_inner, n_pieces = 0, 0, 0
+    out["region"] = None
+    if surf:
+        last = surf[-1]
+        st_last, ph_last, _ = lines[last]
+        rho = kinds[last][1]
+        Rg, Zg, phg = _sections_of_line(tr, st_last[:Ks], rho, phi_s)
+        out["region"] = (Rg, Zg, phg)                       # the glow fills the core, up to its last surface
+        need = int(math.ceil(n_out * Ls["outer_transits"] * nfp)) * tr.steps + 1
+        dense = tr.dense(st_last[:need], ph_last[:need], per_turn)
+        piece = int(round(Ls["outer_transits"] * per_turn))
+        n_pieces = min(n_out, (len(dense) - 1) // piece)
+        for k in range(n_pieces):
+            out["fibres"].append(_fibre(dense[k * piece:(k + 1) * piece + 1], per_turn, rng,
+                                        rng.uniform(*P["outer_brightness"])))
+        kept_inner = _inner_lines(tr, a, seeds[last], phi_s, n_out, per_turn, rng, out)
+        if CUT > 0:
+            pick = sorted(set(np.round(np.linspace(0, len(surf) - 1, min(_ring_count(out), len(surf)))).astype(int)))
+            for j in pick:
+                c = _crossings(tr, lines[surf[j]][0][:Ks], lines[surf[j]][1][:Ks], out["cut"][0])
+                if len(c):
+                    out["dots"].append((c, "points", 1.0))
+                    rings_drawn += 1
+    # the islands: the ray's lines locked to the chain's rotation, from its separatrix in to the elliptic point (whose
+    # own line, the ray's last, is the elliptic line drawn below)
+    T = q * nfp // gcd(q, nfp)              # field periods for a line to come back to its island in the same plane
+    g = gcd(q, nfp)                         # distinct island tubes: the source's turns give the rest
+    span = T * tr.steps
+    keep = [lines[k][:2] for k, (kind, _) in enumerate(kinds) if kind == "island" and k < len(kinds) - 1]
+    # each as strands along its island's tube: pieces of one closure each, started at the returns to the island whose
+    # angles round its centre are spread evenly (the outermost line the most, as the surface's own lines)
+    strands, gap, cut_pts, n_isl = 0, 0.0, [], 0
+    if keep:
+        ret = keep[0][0][:-1:span]
+        o = np.argsort(np.arctan2(ret[:, 1] - o0[1], ret[:, 0] - o0[0]))
+        n_isl = _outer_count(out["scale"], _perimeter(ret[o, 0], ret[o, 1]))
+    for j, (st, ph) in enumerate(keep):
+        outer = j == 0
+        n_ret = (len(st) - 1) // span
+        ang = np.arctan2(st[:n_ret * span:span, 1] - o0[1], st[:n_ret * span:span, 0] - o0[0])
+        srt = np.sort(ang)
+        gap = max(gap, float(np.max(np.diff(np.append(srt, srt[0] + 2 * np.pi)))))
+        n = n_isl if outer else max(4, n_isl // 2)
+        aims = -np.pi + 2 * np.pi * (np.arange(n) + 0.5) / n
+        picks = sorted({int(np.argmin(np.abs(np.angle(np.exp(1j * (ang - t)))))) for t in aims})
+        for k in picks:
+            d = tr.dense(st[k * span:(k + 1) * span + 1], ph[k * span:(k + 1) * span + 1], per_turn)
+            b = rng.uniform(*P["outer_brightness"]) if outer else P["inner_brightness"]
+            for r in range(g):
+                out["fibres"].append(_fibre(d @ _rot(360.0 * r / nfp).T, per_turn, rng, b, channel="islands"))
+            strands += 1
+        if CUT > 0:
+            c = _crossings(tr, st, ph, out["cut"][0])
+            if len(c):
+                cut_pts.append(c)
+    # the elliptic lines at the islands' centres, closed
+    for chain in o_loops:
+        seg = [tr.dense(*o_pieces[k][:2], per_turn) for k in chain]
+        loop = np.concatenate([s_[:-1] for s_ in seg])
+        out["fibres"].append(_loop(loop, 1.0, "islands"))
+    beads = []
+    if CUT > 0:
+        beads = [c[0] for c in (_crossings(tr, st, ph, out["cut"][0]) for st, ph, _ in o_pieces) if len(c)]
+        out["dots"].append((np.array(beads).reshape(-1, 2), "beads", 1.0))
+        if cut_pts:
+            out["dots"].append((np.concatenate(cut_pts), "islands", 1.0))
+    count = {k: sum(1 for kind, _ in kinds if kind == k) for k in ("surface", "island", "chaos", "other", "lost")}
+    out["about"] += [f"the island chain at iota = {_frac(p * nfp, q)} ({q} islands in each cross-section, "
+                     f"{width:.0f} pixels wide at README size) at its true width, from {ISLANDS['ray']} lines traced "
+                     f"{K} field periods from the certificate's axis point to its elliptic point at R = {o0[0]:.4f} m, "
+                     f"told by their rotation numbers: {count['surface']} on surfaces round the axis, "
+                     f"{count['island']} locked to the chain, {count['other']} to other chains, {count['chaos']} "
+                     f"chaotic, {count['lost']} that left",
+                     f"inside the chain, the last of them on a surface drawn as {n_pieces} pieces of "
+                     f"{Ls['outer_transits']} turns, {kept_inner} more lines inside it, and a glow filling it",
+                     f"the islands: the {len(keep)} lines locked to the chain before the elliptic point as {strands} "
+                     f"strands of one closure ({T} field periods) each, started where their returns to the island lie "
+                     f"evenly round its centre (no gap between returns wider than {math.degrees(gap):.0f} degrees), "
+                     f"turned by the source's own symmetry onto its {g} island tube{'s' if g != 1 else ''}; and the "
+                     f"{len(O)} elliptic points traced one turn each and closed into {len(o_loops)} lines (ends within "
+                     f"{o_gap:.1e} m of a start) at their centres",
+                     f"in the cut, {len(beads)} elliptic points as beads, the punctures of the lines locked to the "
+                     f"chain as closed curves round them, and {rings_drawn} rings of lines on surfaces inside"]
 
 
 def _frac(a, b):
