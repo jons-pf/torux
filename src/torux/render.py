@@ -1144,10 +1144,11 @@ def _wedge(cut):
 
 
 def _in_wedge(x, cut):
-    """Whether points (n, 3), in the source's own frame, lie in the cut-away wedge."""
+    """Whether points (n, 3), in the source's own frame, lie inside the cut-away wedge (its two planes, where the
+    cross-section's points sit, are not inside it)."""
     a, b = _wedge(cut)
     d = np.mod(np.arctan2(x[:, 1], x[:, 0]) - a, 2 * np.pi)
-    return (d > 0) & (d < b - a)
+    return (d > 1e-9) & (d < b - a - 1e-9)
 
 
 def _open_sections(R, Z, ph, cut):
