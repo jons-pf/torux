@@ -654,8 +654,8 @@ def _wout_file(path, origin, netcdf3, which):
             try:
                 import h5py
             except ImportError:
-                raise ImportError(f'{path}: reading a NetCDF4 (HDF5) file needs h5py: pip install ".[hdf5]" in the '
-                                  f'torux folder') from None
+                raise ImportError(f'{path}: reading a NetCDF4 (HDF5) file needs h5py: pip install '
+                                  f'"torux[hdf5]"') from None
             with h5py.File(path, "r") as f:
                 for k in need + opt:
                     if k in f:

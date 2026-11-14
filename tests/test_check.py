@@ -236,7 +236,7 @@ def test_netcdf4_without_a_reader_says_what_to_install(tmp_path, monkeypatch):
     _write_wout(p, "NETCDF4", "netCDF4")
     monkeypatch.setitem(sys.modules, "netCDF4", None)
     monkeypatch.setitem(sys.modules, "h5py", None)
-    with pytest.raises(ImportError, match=r"pip install \"\.\[hdf5\]\""):
+    with pytest.raises(ImportError, match=r"pip install \"torux\[hdf5\]\""):
         read_surface(str(p))
 
 

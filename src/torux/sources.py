@@ -74,7 +74,7 @@ def load(path, *more, nfp=None, kind=None, flux=None, which=None, name=None, cur
     except ImportError as e:
         lib = getattr(e, "name", None)
         if lib in ("h5py", "netCDF4"):
-            raise ImportError(f'reading {first} needs h5py: pip install ".[hdf5]" in the torux folder') from e
+            raise ImportError(f'reading {first} needs h5py: pip install "torux[hdf5]"') from e
         raise
     except NotImplementedError as e:
         live = [t for t in temps if t.get("temporary")]
@@ -254,7 +254,7 @@ def _desc_file(x):
     try:
         import h5py  # noqa: F401
     except ImportError as e:  # pragma: no cover
-        raise ImportError(f'reading a DESC coil set needs h5py: pip install ".[hdf5]" in the torux folder ({e})') from e
+        raise ImportError(f'reading a DESC coil set needs h5py: pip install "torux[hdf5]" ({e})') from e
     name = (getattr(x, "name", "") or "").strip() or "desc_coils"
     t = _temp(what, name, ".h5", "torux reads DESC's FourierPlanarCoil, FourierRZCoil and FourierXYZCoil exactly: "
                                  "convert the others with DESC's to_FourierXYZ() first, an approximation DESC "
