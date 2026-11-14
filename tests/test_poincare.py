@@ -491,8 +491,10 @@ def test_wendelstein_7x_shows_its_five_edge_islands():
 
 @pytest.mark.slow
 def test_quasr_797878_shows_its_wide_chain():
-    """QUASR 797878: lines round its wide chain of six islands, in every plane, each with the chain's transform."""
+    """QUASR 797878: lines round its wide chain of six islands, in every plane, and four or more of them with the
+    chain's transform, settled (a line that wanders along the chain's separatrix stays in it too, with none)."""
     p = torux.poincare("quasr:797878")
     chain = [i for i in range(len(p.start)) if all(chain_of(p, i, j) == 6 for j in range(3))]
-    assert len(chain) >= 4
-    assert all(abs(p.iota[i] + 0.5) < 1e-4 for i in chain), p.lines_table()
+    settled = [i for i in chain if np.isfinite(p.iota[i])]
+    assert len(settled) >= 4, p.lines_table()
+    assert all(abs(p.iota[i] + 0.5) < 1e-4 for i in settled), p.lines_table()
