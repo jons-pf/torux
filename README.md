@@ -110,6 +110,7 @@ print(s)                                 # what it found and how it was checked,
 s.iota, s.volume, s.aspect_ratio         # the numbers
 s.save("input.mine")                     # a VMEC input: VMEC, VMEC++, DESC and SIMSOPT read it
 s.plot("mine.png")                       # the picture below
+s.render("hero.png")                     # the answer drawn as the machines at the top, cut open or closed
 s.boozer().quasisymmetry                 # |B| in Boozer angles, and how far it is from quasi-symmetry
 
 torux.check("coils.json", "wout_other.nc")    # a surface from another code: how much of the field crosses it

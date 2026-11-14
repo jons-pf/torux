@@ -11,6 +11,7 @@
 | `batch.py` | `many`: every design in a process of its own, one row each |
 | `load.py`, `sources.py` | `load`: a source from files, a QUASR number, a live SIMSOPT or DESC object |
 | `plot.py`, `boozer.py` | the picture, and the Boozer spectrum and quasi-symmetry |
+| `render.py`, `pathtrace.py` | `answer.render`: the answer as one path-traced picture in the README's look, cut open or closed |
 | `cli.py` | the `torux` command |
 | `api.py` | the solver's one call per request: a stated budget, a truthful outcome |
 | `source.py` | what a source is: filaments, polygons, segments, dipoles, rings, conductors |

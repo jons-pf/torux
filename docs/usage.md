@@ -234,6 +234,29 @@ s.plot("q954.png")          # .png, .pdf or .svg, and dark=True for a dark page
 
 The surface coloured by field strength inside its coils, and three cross-sections. Green is a surface the independent check verified and nothing else: any other torus an answer holds (`surface_unverified`, `range_unverified`, `verify=False`, a timeout) is drawn in greys, its sections dashed. Coils without current, conductors of finite section and the 1/R field are not drawn, and a warning names them.
 
+## Rendering
+
+```python
+s.render("q954.png")                    # a .png, and dark=True for a dark page
+s.render("q954-closed.png", cut=False)  # the machine closed
+```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../visuals/render-cut-dark.png">
+  <img src="../visuals/render-cut-light.png" width="760" alt="The picture s.render draws for QUASR 954: four copper coils standing on the floor, and inside them the verified flux surface as teal light woven from its field lines. A wedge of it is cut away in front of one cross-section, where the punctures of field lines show as rings of points.">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../visuals/render-closed-dark.png">
+  <img src="../visuals/render-closed-light.png" width="760" alt="The same picture with cut=False: the surface's light runs all the way round the machine, and no cross-section is opened.">
+</picture>
+
+The answer in the look of the pictures at the top of the README: the coils in copper and the plasma as light woven from field lines. Everything drawn comes from the answer. A verified surface is its own field lines, the nested surfaces inside it are lines traced in the coils' field, and a faint glow fills it. Where there is no surface the picture draws the certificate: the island chain where it is, at its true width once it is wide enough to see, or beyond the last surface the lines on surfaces up to it and a haze of the lines that leave. By default a wedge of the plasma is cut away in front of one cross-section, and in that section the punctures of field lines show as points of light: the nested surfaces as rings, the islands round their centres, the chaotic edge as a scatter. `cut=False` draws the machine closed, from the same view.
+
+It takes minutes where `plot` takes seconds, and the first picture in a process also compiles the tracer. The other page's picture of the same answer then takes no time, and the second of cut and closed the tracing alone. One size, 1,676 pixels wide, which is 838 on a screen of twice the density. It needs nothing beyond torux itself: no matplotlib.
+
+An answer with nothing of the plasma to draw (`undetermined`, `timeout`, `no_axis`, a torus that was not verified) is drawn as its coils alone. One that does not hold its coils raises ValueError, as `plot` does: an answer read back from its JSON, and one that ended before the field was built, which is an error or the verdict on a source that is not a stellarator (a tokamak's coils, perturbation coils, a dipole). `help(torux.render)` says what each mark is and what is decoration. From the shell: `torux render examples/quasr_0000954.json q954-closed.png --closed`.
+
 ## Boozer spectrum and quasisymmetry
 
 ```python
@@ -351,11 +374,15 @@ torux check SOURCE [SOURCE ...] SURFACE [--flux WB] [--nfp N] [--which NAME] [--
             [--surface-currents saved|dofs] [--mismatched-coils]
 torux many SOURCE [SOURCE ...] --table FILE [--flux WB | --minor-radius M | --volume M3 | --largest]
             [--budget S] [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
+torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
+             [--nfp N] [--kind stellarator|tokamak|dipole] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
 ```
 
 `--coils` and `--currents` are what `torux.load` takes as `which=` and `currents=` for a SIMSOPT JSON source: the coil set of a file holding several, by its `BiotSavart`'s name or index, and which of a `Current` object's two values to take where they differ ([formats](formats.md#simsopt-files-torux-refuses-rather-than-guess)). In `many` every SOURCE is a design of its own: given once, they apply to every design, and given once per SOURCE, in order, each applies to its own design, `-` for one that needs none. In `solve` and `check`, with several source files, `--coils` once is the first file's, and given once per file, in order, it is each file's, `-` for a file that needs none: `torux check a.json b.json surface.json --coils BiotSavart1 --coils BiotSavart2`, as `which=["BiotSavart1", "BiotSavart2"]` in Python. In `check`, `--which` is the surface's: `torux check file.json file.json --coils BiotSavart6 --which SurfaceXYZTensorFourier3`, and `--surface-currents` and `--mismatched-coils` are its `surface_currents=` and `mismatched_coils=True`.
 
 `solve` prints the answer on standard output and says on standard error what it is asking and, in a search, each request as it ends. It exits with 0 for a surface or a certified or proved no-surface, 2 for anything undetermined and nothing else, 1 for an error, a command line it cannot read included.
+
+`render` asks as `solve` does and prints the answer, then writes its [picture](#rendering) to FILE, a .png: `--dark` for a dark page, `--closed` for the machine closed. It exits as `solve` does, or with 1 where no picture could be written.
 
 ## Budget, memory and threads
 
