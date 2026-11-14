@@ -222,7 +222,8 @@ def _render_args(sub):
                                    "answer.render does: its coils in copper and the surface, or the certificate that "
                                    "there is none, in light, a wedge of the plasma cut away in front of one "
                                    "cross-section. Minutes of path tracing. An answer with nothing of the plasma to "
-                                   "draw is drawn as its coils alone.")
+                                   "draw is drawn as its coils alone. A proof that a source which is not a "
+                                   "stellarator has no surface keeps no coils: it is not drawn, and the code is 1.")
     r.add_argument("files", nargs="+", metavar="SOURCE",
                    help="a coil or magnet file, or quasr:NUMBER. Several files whose parts add up are one source")
     r.add_argument("file", metavar="FILE", help="the picture to write: a .png file")
@@ -250,18 +251,26 @@ def _render(a):
     import os
     import warnings
     warnings.filterwarnings("ignore", category=RuntimeWarning, module=r"torux(\.|$)")
+    from .plot import check_folder
+    from .render import _source
     try:
         if os.path.splitext(a.file)[1].lower() != ".png":
             raise ValueError(f"cannot render to {a.file!r}: name a .png file")
+        check_folder(a.file)
         res = _ask(a)
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1
     print(res, flush=True)                  # the answer stands before the minutes of tracing, into a pipe too
+    try:
+        _source(res)
+    except ValueError as e:                 # nothing to draw, said before any work
+        print(f"not drawn   {a.file}: {e}", file=sys.stderr)
+        return 1
     _say(f"rendering {a.file}: minutes of path tracing")
     try:
         res.render(a.file, dark=a.dark, cut=not a.closed)
-    except ValueError as e:             # an answer that does not hold its source: nothing written
+    except ValueError as e:
         print(f"not drawn   {a.file}: {e}", file=sys.stderr)
         return 1
     except OSError as e:
@@ -292,14 +301,17 @@ def _many(a):
 
 def _poincare_args(sub):
     s = sub.add_parser("poincare", help="field lines through planes of constant toroidal angle, and their picture",
+                       usage="torux poincare SOURCE [SOURCE ...] [FILE] [--planes DEG [DEG ...]] [--lines N] "
+                             "[--turns N] [--start R,Z] [--dark] [--nfp N] [--kind K] [--coils NAME] "
+                             "[--currents saved|dofs]",
                        description="Field lines of the source's own field, traced through planes of constant toroidal "
                                    "angle: where each line starts, its rotational transform and whether it left the "
                                    "machine. With FILE, the picture. torux chooses where lines start, how many and "
                                    "how far they go, unless told.")
     s.add_argument("files", nargs="+", metavar="SOURCE",
-                   help="a coil or magnet file, or quasr:NUMBER, then optionally FILE: the picture, .png, .pdf or "
-                        ".svg")
-    s.add_argument("--planes", type=float, nargs="+", metavar="DEG",
+                   help="a coil or magnet file, or quasr:NUMBER (several files whose parts add up are one source), "
+                        "then optionally FILE: the picture, .png, .pdf or .svg")
+    s.add_argument("--planes", nargs="+", metavar="DEG",
                    help="the planes' toroidal angles in degrees (default: the start, a quarter and a half of a field "
                         "period)")
     s.add_argument("--lines", type=int, metavar="N", help="lines started from the magnetic axis to the edge (default "
@@ -311,8 +323,38 @@ def _poincare_args(sub):
                                                                    "than once")
     s.add_argument("--dark", action="store_true", help="draw FILE for a dark page")
     s.add_argument("--nfp", type=int, metavar="N", help="field periods, where the format does not state them")
+    s.add_argument("--kind", choices=("stellarator", "tokamak", "dipole"), help="what the source is (default: "
+                                                                                "stellarator)")
     from .check import add_source_choices
     add_source_choices(s)
+
+
+# names of pictures: the last argument named so is the picture asked for, and one torux cannot draw is refused as such
+PICTURES = (".png", ".pdf", ".svg", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp", ".eps", ".ps")
+
+
+def _degrees(values, files):
+    """--planes' angles, and the arguments after them that are not angles moved back to the files (argparse gives
+    --planes every argument up to the next option)."""
+    out = []
+    for i, v in enumerate(values):
+        try:
+            out.append(float(v))
+        except ValueError:
+            rest = values[i:]
+            if not out or any(_number(r) for r in rest):
+                raise ValueError(f"--planes takes the planes' angles in degrees: {v!r} is not one") from None
+            files += rest
+            break
+    return out
+
+
+def _number(v):
+    try:
+        float(v)
+        return True
+    except ValueError:
+        return False
 
 
 @_stopped
@@ -321,12 +363,14 @@ def _poincare(a):
     import os
     import torux
     files, picture = list(a.files), None
-    if len(files) > 1 and os.path.splitext(files[-1])[1].lower() in (".png", ".pdf", ".svg"):
-        picture = files.pop()
     try:
+        degrees = None if a.planes is None else _degrees(a.planes, files)
+        if len(files) > 1 and os.path.splitext(files[-1])[1].lower() in PICTURES:
+            picture = files.pop()
         if picture is not None:
-            from .plot import check_path
+            from .plot import check_folder, check_path
             check_path(picture)
+            check_folder(picture)
         starts = None
         if a.start:
             try:
@@ -337,10 +381,10 @@ def _poincare(a):
                 raise ValueError("--start takes R,Z in metres, for example --start 1.1,0")
         from .check import source_choices
         from . import ask
-        src = torux.load(*files, nfp=a.nfp, **source_choices(a))
+        src = torux.load(*files, nfp=a.nfp, kind=a.kind, **source_choices(a))
         ask.say = _say
         try:
-            p = torux.poincare(src, planes=None if a.planes is None else [math.radians(v) for v in a.planes],
+            p = torux.poincare(src, planes=None if degrees is None else [math.radians(v) for v in degrees],
                                lines=a.lines, turns=a.turns, starts=starts)
         finally:
             ask.say = None

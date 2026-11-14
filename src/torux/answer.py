@@ -321,8 +321,9 @@ class Answer(Result):
         .png file, whose path is returned.  ``dark=True`` for a dark page.  By default a wedge of the plasma is cut
         away in front of one cross-section, where the punctures of field lines show as points of light.
         ``cut=False`` draws the machine closed.  An answer with nothing of the plasma to draw (undetermined, a
-        timeout, a surface not verified) draws its coils alone, and one that does not hold its source (read from a
-        file, or a proof) raises ValueError.  torux.render says what each mark is."""
+        timeout, a surface not verified) draws its coils alone.  One that holds no coils (read from a file, or a
+        proof that a source which is not a stellarator has no surface) raises ValueError, and so does a path whose
+        folder cannot be written, both before any work.  help(torux.render) says what each mark is."""
         from .render import render
         return render(self, path, dark=dark, cut=cut)
 
@@ -330,7 +331,8 @@ class Answer(Result):
         """Field lines of the answer's source traced through planes of constant toroidal angle, as torux.poincare
         traces them, with one more line started on the answer's surface (a torux.Poincare). Its plot draws the
         surface over the crossings, green only where the independent check verified it, and what a certificate
-        holds. Needs the source: an answer read from a file has none, solve again."""
+        holds. Needs the source: one read from a file holds none (solve again), and a proof keeps none (ValueError,
+        with the proof)."""
         from .poincare_section import of_answer
         return of_answer(self, planes=planes, lines=lines, turns=turns, starts=starts)
 
@@ -1019,6 +1021,30 @@ VERDICTS = {
 
 def _phrases(tags):
     return ", and ".join(ARGUMENTS[t][0] if t in ARGUMENTS else t.lower().replace("_", " ") for t in tags)
+
+
+def proof_words(p):
+    """A proof that a source has no surface (torux.nonstell's record), as its answer says it: the verdict and the
+    decisive arguments, or None where the record proves nothing."""
+    v = str((p or {}).get("verdict", ""))
+    if v not in VERDICTS:
+        return None
+    args = [t for t in (p.get("arguments") or []) if isinstance(t, str)]
+    main = args if p.get("kind") == "axisymmetric" else ([t for t in args if t in DECISIVE] or args)
+    return VERDICTS[v] + (f", because {_phrases(main)}" if main else "")
+
+
+def without_source(answer):
+    """Why an answer holds no source, in a sentence with the advice that fits it: what render and poincare say."""
+    words = proof_words((answer.evidence or {}).get("proof"))
+    if words:
+        return f"this answer is a proof, which keeps neither the coils nor their field: {words}"
+    if (answer.evidence or {}).get("proof"):
+        return ("this answer is torux's reading of a source that is not a stellarator, which keeps no field: it "
+                "could not settle it (print the answer for why)")
+    if answer.status == "error":
+        return "this answer ended in an error before the field was built (print the answer for it)"
+    return "this answer was read from a file, which holds no coils: solve the source again"
 
 
 def _asked(a, rows):

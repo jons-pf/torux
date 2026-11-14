@@ -113,3 +113,12 @@ from .poincare_section import Poincare, poincare  # noqa: E402
 __all__ = ["solve", "load", "check", "many", "poincare", "Answer", "Check", "Poincare", "Request", "Result", "Source",
            "FourierCurves", "PolylineCurves", "Segments", "Dipoles", "Rings", "AxisymPolygons", "ToroidalField",
            "__version__"]
+
+
+def __getattr__(name):
+    """torux.render, the module that says what each mark of answer.render is, without importing its tracer with
+    torux."""
+    if name == "render":
+        import importlib
+        return importlib.import_module(".render", __name__)
+    raise AttributeError(f"module 'torux' has no attribute {name!r}")

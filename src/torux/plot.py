@@ -86,6 +86,22 @@ def check_path(path):
     return ext
 
 
+def check_folder(path):
+    """OSError, in a sentence naming the folder, where a file cannot be written at ``path``: its folder does not
+    exist or cannot be written in, or the path is a folder or a file that cannot be written over.  Asked before the
+    work whose result goes there."""
+    name = os.fspath(path)
+    folder = os.path.dirname(os.path.abspath(name))
+    if not os.path.isdir(folder):
+        raise FileNotFoundError(f"cannot write {name!r}: there is no folder {folder!r}")
+    if os.path.isdir(name):
+        raise IsADirectoryError(f"cannot write {name!r}: it is a folder")
+    if not os.access(folder, os.W_OK | os.X_OK):
+        raise PermissionError(f"cannot write {name!r}: the folder {folder!r} cannot be written in")
+    if os.path.exists(name) and not os.access(name, os.W_OK):
+        raise PermissionError(f"cannot write {name!r}: the file is there and cannot be written over")
+
+
 # ------------------------------------------------------------------------------------------------ what is drawn
 class _Picture:
     """What the figure shows, in SI units and screen coordinates, computed from an answer by ``_picture``."""
@@ -685,6 +701,8 @@ def _ticks(lo, hi, length, font, along, most=5):
     """At most ``most`` ticks in [lo, hi] on an axis ``length`` inches long, on round numbers written with the same
     decimals: labels side by side (``along``) keep a gap of one and a half lines between them, labels one above
     the other keep 1.6 lines from baseline to baseline."""
+    if not hi - lo > 0:
+        return np.array([]), []
     e0 = int(math.floor(math.log10(hi - lo)))
     for e in range(e0 - 2, e0 + 2):                    # the finest step whose labels have room, steps 1, 2, 5
         for m in (1, 2, 5):
@@ -769,6 +787,8 @@ def poincare_plot(p, path=None, *, dark=False):
     answer draws the answer's surface over them, green where the independent check verified it, and what its
     certificate holds."""
     ext = check_path(path)
+    if path is not None:
+        check_folder(path)
     q = _poincare_picture(p)
     if path is not None:
         fig = _poincare_figure(q, dark)

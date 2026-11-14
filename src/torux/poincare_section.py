@@ -159,8 +159,12 @@ def poincare(source, *, planes=None, lines=None, turns=None, starts=None):
     turns    toroidal turns each line is followed (default: 600 field periods)
     starts   (n, 2): R, Z in m where lines start in the first plane, instead of torux's choice
     """
+    from .api import Result
     from .source import Source
     from .sources import load
+    if isinstance(source, Result):
+        raise TypeError("torux.poincare takes a source: the section of an answer, with its surface drawn over the "
+                        "crossings, is answer.poincare()")
     src = source if isinstance(source, Source) else load(source)
     return _poincare(src, None, planes, lines, turns, starts)
 
@@ -174,8 +178,8 @@ def of_answer(answer, *, planes=None, lines=None, turns=None, starts=None):
             src = s
             break
     if src is None:
-        raise ValueError("this answer does not hold its source (it was read from a file or settled by proof): solve "
-                         "the source again for its field lines")
+        from .answer import without_source
+        raise ValueError(f"no field lines to trace: {without_source(answer)}")
     return _poincare(src, answer, planes, lines, turns, starts)
 
 
@@ -200,6 +204,17 @@ def _poincare(src, answer, planes, lines, turns, starts):
     rel = np.mod(planes - phi0, period)
     order = np.argsort(rel)
     box, size = _box(src)
+    if answer is None:
+        proved = _proved(src)
+        if proved:
+            raise ValueError(f"{src.id}: no section to trace: {proved}")
+    if starts is not None:
+        out = (starts[:, 0] < box[0]) | (starts[:, 0] > box[1]) | (starts[:, 1] < box[2]) | (starts[:, 1] > box[3])
+        if out.any():
+            R0, Z0 = starts[np.argmax(out)]
+            raise ValueError(f"a line cannot start at R, Z = {R0:g}, {Z0:g} m: that is outside the machine, the box "
+                             f"round its conductors, R {box[0]:.3g} to {box[1]:.3g} m and Z {box[2]:.3g} to "
+                             f"{box[3]:.3g} m")
     tm = {}
     t = time.time()
     axis = _axis(_engine(src, answer), src, answer, nfp)
@@ -212,6 +227,11 @@ def _poincare(src, answer, planes, lines, turns, starts):
         seeds, steps = _choose_starts(tr, src, axis, phi0, period, box, size, LINES if lines is None else int(lines),
                                       nper, nfp)
     else:
+        near = ~_clear(src, starts, phi0, tr.dstop, tr.nodes)
+        if near.any():
+            R0, Z0 = starts[np.argmax(near)]
+            raise ValueError(f"a line cannot start at R, Z = {R0:g}, {Z0:g} m: that is within {tr.dstop:.3g} m of a "
+                             f"conductor, where a line has left the machine")
         seeds, steps = starts, _steps(tr, starts[:4], phi0, period, ax_at, starts[0, 0])
     tm["starts"], t = time.time() - t, time.time()
     on_surface = None
@@ -343,12 +363,14 @@ def _say_how_long(tr, seeds, sc, nper, phi0, src):
     to the logger "torux" at INFO, and through torux.ask.say (the command line writes it to stderr), as a search of
     torux.solve says what it asks and how long it may take."""
     t = time.time()
-    tr.run(seeds, sc, SAY_PERIODS, phi0)
-    est = (time.time() - t) / SAY_PERIODS * nper
+    o = tr.run(seeds, sc, SAY_PERIODS, phi0)
+    # the lines that left in these periods cost nothing further
+    est = (time.time() - t) / SAY_PERIODS * nper * float(np.mean(~o["lost"]))
     if est > SAY_AFTER:
         from .ask import _say
-        _say(f"{getattr(src, 'id', None) or 'the source'}: tracing {len(seeds)} field lines through {nper} field "
-             f"periods, about {_duration(est)}, and longer where lines go on to close their curves")
+        n = len(seeds)
+        _say(f"{getattr(src, 'id', None) or 'the source'}: tracing {n} field line{'s' if n != 1 else ''} through "
+             f"{nper} field periods, about {_duration(est)}, then more for any lines it follows on")
 
 
 def _duration(s):
@@ -363,6 +385,10 @@ def _planes(planes, period, phi_ref):
     p = np.atleast_1d(np.asarray(planes, float)).ravel()
     if not len(p) or not np.all(np.isfinite(p)):
         raise ValueError("planes= takes the cylindrical angles of one or more planes, in radians")
+    if np.any(np.abs(p) > 2 * np.pi + 1e-9):
+        v = float(p[np.argmax(np.abs(p) > 2 * np.pi + 1e-9)])
+        raise ValueError(f"planes= takes angles in radians, within a turn (-2π to 2π): {v:g} is "
+                         f"{math.degrees(v):g}°. For {v:g}°, give math.radians({v:g})")
     rel = np.mod(p - p[0], period)
     rel = np.where(np.isclose(rel, period, rtol=0, atol=1e-12), 0.0, rel)
     if len(np.unique(np.round(rel, 12))) != len(p):
@@ -376,7 +402,10 @@ def _periods(turns, nfp):
     t = float(turns)
     if not (t > 0 and math.isfinite(t)):
         raise ValueError(f"turns={turns!r}: give the toroidal turns each line is followed, a positive number")
-    return max(1, int(round(t * nfp)))
+    if round(t * nfp) < 1:
+        raise ValueError(f"turns={turns!r}: a line crosses each plane once a field period, so it is followed whole "
+                         f"periods, at least one: {_num(1 / nfp)} turns")
+    return int(round(t * nfp))
 
 
 def _engine(src, answer, dmin=None):
@@ -458,15 +487,46 @@ def _conductor_points(src):
 
 
 def _box(src):
-    """(Rmin, Rmax, Zmin, Zmax) a little larger than the conductors' extent, and the extent's size (m)."""
+    """(Rmin, Rmax, Zmin, Zmax) a little larger than the conductors' extent, and the extent's size (m).  Where the
+    conductors have almost no extent in R or in Z (one ring, rings at one radius, coils in one plane), that side is
+    as wide as the other, or as half the largest R."""
     x = _conductor_points(src)
     if not len(x):
         return np.array([1e-6, 1e6, -1e6, 1e6]), 1.0
     R = np.hypot(x[:, 0], x[:, 1])
     lo, hi = np.array([R.min(), x[:, 2].min()]), np.array([R.max(), x[:, 2].max()])
+    wide = max(float(max(hi - lo)), 0.5 * float(R.max()))
+    for d in (0, 1):
+        if hi[d] - lo[d] < 0.25 * wide:
+            mid = 0.5 * (lo[d] + hi[d])
+            lo[d], hi[d] = mid - 0.5 * wide, mid + 0.5 * wide
     size = float(max(hi - lo))
     pad = 0.05 * size
     return np.array([max(1e-6, lo[0] - pad), hi[0] + pad, lo[1] - pad, hi[1] + pad]), size
+
+
+def _clear(src, y, phi0, d, nodes=()):
+    """Which points (R, Z) of the plane phi0 are at least d from every conductor (and from the points nodes)."""
+    from scipy.spatial import cKDTree
+    x = np.concatenate([_conductor_points(src), np.asarray(nodes, float).reshape(-1, 3)])
+    y = np.asarray(y, float).reshape(-1, 2)
+    if not len(x) or d <= 0:
+        return np.ones(len(y), bool)
+    p = np.column_stack([y[:, 0] * math.cos(phi0), y[:, 0] * math.sin(phi0), y[:, 1]])
+    return cKDTree(x).query(p)[0] >= d
+
+
+def _proved(src):
+    """torux.solve's proof that a source which is not a stellarator has no surface (torux.nonstell), in the words its
+    answer says it in, or None: a stellarator, or a source the proof does not settle."""
+    from . import nonstell as NS
+    from .answer import proof_words
+    try:
+        if not NS.scope(src)[0]:
+            return None
+        return proof_words(NS.classify(src))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _sign(eng, src, axis, phi0, box):
@@ -491,7 +551,8 @@ def _axis(eng, src, answer, nfp):
     from .analysis import find_axes
     from .axis_general import find_axes_general
     try:
-        axes = find_axes(eng, src) if src.stellsym else find_axes_general(eng, src)
+        with np.errstate(all="ignore"):                 # numpy's notes on a search's own arithmetic
+            axes = find_axes(eng, src) if src.stellsym else find_axes_general(eng, src)
     except Exception:  # noqa: BLE001
         return None
     ell = [a for a in axes if 0 < a.residue < 1]
@@ -604,10 +665,19 @@ def _choose_starts(tr, src, axis, phi0, period, box, size, nlines, nper, nfp):
     PROBE_PERIODS, and EDGE_EXTRA beyond it.  Without an axis, evenly across the middle of the box."""
     from .poincare_trace import Schedule
     if axis is None:
-        R = np.linspace(box[0], box[1], nlines + 2)[1:-1]
-        Z = np.full(nlines, 0.5 * (box[2] + box[3]))
-        y = np.column_stack([R, Z])
-        return y, _steps(tr, y[::max(1, nlines // 4)], phi0, period, None, float(np.median(R)))
+        # across the middle of the box, clear of the conductors, where a line goes once round the machine
+        R = np.linspace(box[0], box[1], 4 * nlines + 2)[1:-1]
+        y = np.column_stack([R, np.full(len(R), 0.5 * (box[2] + box[3]))])
+        y = y[_clear(src, y, phi0, max(tr.dstop, 0.02 * size), tr.nodes)]
+        o = tr.run(y, Schedule([0.0], period, PROBE_STEPS, None, phi0), 1, phi0)
+        y = y[~o["lost"]]
+        if not len(y):
+            raise ValueError(f"{getattr(src, 'id', None) or 'the source'}: no section to trace: torux found no "
+                             f"magnetic axis, and no field line started across the box round the conductors goes "
+                             f"round the machine for one field period. If these are a tokamak's coils or a dipole, say "
+                             f"so with kind='tokamak' or kind='dipole' (--kind): torux.solve settles those by proof")
+        y = y[np.unique(np.round(np.linspace(0, len(y) - 1, min(nlines, len(y)))).astype(int))]
+        return y, _steps(tr, y[::max(1, len(y) // 4)], phi0, period, None, float(np.median(y[:, 0])))
     aR, aZ, rmax = _ray(tr, axis, phi0, box)
     r = rmax * np.arange(1, PROBES + 1) / PROBES
     probe = np.column_stack([aR + r, np.full(PROBES, aZ)])

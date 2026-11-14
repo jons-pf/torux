@@ -222,6 +222,36 @@ def test_torux_render_solves_prints_and_draws(monkeypatch, tmp_path, capsys):
     assert "not drawn" in capsys.readouterr().err and not (tmp_path / "n.png").exists()
 
 
+def test_help_of_torux_render_says_what_each_mark_is_in_a_fresh_session():
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "-c", "import pydoc, torux; print(pydoc.render_doc(torux.render))"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "Decoration, encoding nothing" in r.stdout, r.stderr
+
+
+def test_what_cannot_be_written_or_drawn_is_said_before_any_work(solved_954, monkeypatch, capsys):
+    """A folder that is not there, before the tracing. A proof keeps no coils: said before any work, in the proof's
+    own words, with no advice to solve again, and from the shell before it says it is rendering."""
+    from torux.cli import main
+
+    def no(*a, **k):
+        raise AssertionError("traced")
+    monkeypatch.setattr(RD, "picture", no)
+    with pytest.raises(FileNotFoundError, match="there is no folder '/nonexistent-dir'"):
+        solved_954.render("/nonexistent-dir/x.png")
+    d3d = torux.solve(example("d3d_icoils_upper.dat"))
+    with pytest.raises(ValueError, match="no field line goes round the machine") as e:
+        d3d.render("d3d.png")
+    assert "solve" not in str(e.value)
+    assert main(["render", example("d3d_icoils_upper.dat"), "d3d.png"]) == 1
+    err = capsys.readouterr().err
+    assert "not drawn   d3d.png: nothing to draw" in err and "rendering" not in err and "solve again" not in err
+    assert main(["render", example("quasr_0000954.json"), "/nonexistent-dir/x.png"]) == 1
+    out, err = capsys.readouterr()
+    assert "there is no folder" in err and not out
+
+
 def test_ctrl_c_stops_the_path_tracing_within_seconds(drawn_954, ctrl_c):
     """Ctrl-C a second into the tracing of the README-sized picture: a plain KeyboardInterrupt within three seconds,
     and Python's own handler of Ctrl-C back in place."""

@@ -152,7 +152,8 @@ def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
     monkeypatch.setattr(A, "say", said.append)
     torux.poincare(quasr_954, starts=[(1.0, 0.0)], turns=20)
-    assert len(said) == 1 and "field lines through 40 field periods, about" in said[0]
+    assert "tracing 1 field line through 40 field periods, about" in said[0]
+    assert all("following" in t for t in said[1:]) and len(said) <= 2
 
 
 EIGHT = [f"{1.0 + 0.01 * k:g},0" for k in range(8)]       # eight lines on surfaces of QUASR 954
@@ -214,17 +215,61 @@ def test_planes_lines_turns_and_starts_are_the_only_knobs(quasr_954):
     (dict(turns=-1), "positive"),
     (dict(starts=[(1.0, 0.0)], lines=3), "not both"),
     (dict(starts=[(-1.0, 0.0)]), "R > 0"),
+    (dict(starts=[(5.0, 0.0)]), "outside the machine"),
+    (dict(planes=[0, 45, 90]), "radians"),
+    (dict(turns=0.2), "at least one: 0.5 turns"),
 ])
 def test_what_cannot_be_traced_is_said(quasr_954, kw, words):
     with pytest.raises(ValueError, match=words):
         torux.poincare(quasr_954, **kw)
 
 
+def test_an_answer_is_sectioned_by_its_own_poincare(solved_954):
+    with pytest.raises(TypeError, match=r"answer\.poincare\(\)"):
+        torux.poincare(solved_954)
+
+
+def test_a_source_whose_lines_do_not_go_round_says_so_before_any_tracing(monkeypatch):
+    """DIII-D's I-coils: torux.solve's proof in its own words, and no estimate of the time first. One ring, a dipole
+    torux is not told is one: no axis and no line round the machine, said in a sentence."""
+    import torux.ask as A
+    import torux.poincare_section as P
+    from torux.source import Rings, Source
+    said = []
+    monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(A, "say", said.append)
+    with pytest.raises(ValueError, match="no field line goes round the machine"):
+        torux.poincare(example("d3d_icoils_upper.dat"))
+    ring = Source(id="ring", parts=[Rings(R=[1.0], Z=[0.0], current=[1e5])], nfp=1, stellsym=True)
+    with pytest.raises(ValueError, match="no section to trace: torux found no magnetic axis"):
+        torux.poincare(ring)
+    assert said == []
+    a = torux.solve(example("d3d_icoils_upper.dat"))
+    with pytest.raises(ValueError, match="no field line goes round the machine") as e:
+        a.poincare()
+    assert "solve" not in str(e.value)
+
+
+@needs_mpl
+def test_lines_of_a_field_without_an_axis_start_across_the_machine(monkeypatch, tmp_path):
+    """A tokamak's 1/R field and two rings, torux not told: lines start across the box round the conductors, not
+    within a few centimetres of the rings' radius, they leave as they do, and the picture has its panels."""
+    from torux.source import Rings, Source, ToroidalField
+    src = Source(id="tokamak", parts=[ToroidalField(RB=2.0), Rings(R=[2.0, 2.0], Z=[0.8, -0.8], current=[5e4, 5e4])],
+                 nfp=1, stellsym=True)
+    p = torux.poincare(src)
+    assert p.axis is None and np.ptp(p.start[:, 0]) > 0.5
+    fig = p.plot()
+    assert all(any(len(c.get_offsets()) for c in ax.collections) for ax in fig.axes)
+    assert all(ax.get_position().height > 0.3 for ax in fig.axes)
+
+
 # ------------------------------------------------------------------------------------------------ the picture
 @needs_mpl
 def test_crossings_are_ink_and_green_is_only_ever_a_verified_surface(solved_954, section_954, tmp_path):
-    """The crossings are drawn in the page's ink. The answer's surface is green where it is verified, and the
-    same section of a torus not verified is grey and dashed, and no pixel is green."""
+    """The crossings are drawn in the page's ink, but those of a line on a surface whose curve has not closed, in its
+    grey. The answer's surface is green where it is verified, and the same section of a torus not verified is grey
+    and dashed, and no pixel is green."""
     import copy
     from PIL import Image
     import torux.plot as P
@@ -300,11 +345,33 @@ def test_the_command_line(tmp_path):
     assert r.returncode == 1 and "--start takes R,Z" in r.stderr
 
 
+def _cli(*args):
+    return subprocess.run([sys.executable, "-m", "torux.cli", "poincare"] + list(args), capture_output=True,
+                          text=True)
+
+
+def test_the_command_line_reads_as_its_usage_says(tmp_path):
+    """SOURCE [SOURCE ...] [FILE] in --help. A picture torux cannot draw is refused as one, a folder that is not
+    there before any tracing, and FILE after --planes' angles is FILE."""
+    r = _cli("--help")
+    assert "SOURCE [SOURCE ...] [FILE]" in r.stdout and "[--start R,Z]" in r.stdout
+    r = _cli(example("quasr_0000954.json"), str(tmp_path / "x.jpg"), "--lines", "2", "--turns", "10")
+    assert r.returncode == 1 and "name a .png, .pdf or .svg file" in r.stderr and not r.stdout
+    r = _cli(example("quasr_0000954.json"), "/nonexistent-dir/x.png", "--lines", "2", "--turns", "10")
+    assert r.returncode == 1 and "there is no folder '/nonexistent-dir'" in r.stderr and not r.stdout
+    r = _cli(example("quasr_0000954.json"), "--turns", "0.2")
+    assert r.returncode == 1 and "at least one" in r.stderr
+    if HAVE_MPL:
+        f = tmp_path / "two.png"
+        r = _cli(example("quasr_0000954.json"), "--planes", "0", "45", str(f), "--lines", "2", "--turns", "10")
+        assert r.returncode == 0 and "phi = 0°, 45°" in r.stdout and f.stat().st_size > 10_000, r.stderr
+
+
 # ------------------------------------------------------------------------------------------------ every design
-def chain_of(p, i, plane=0):
+def chain_of(p, i, plane=0, q_max=12):
     """The islands line i goes round in a plane: q where its mean turn about the axis a field period (the weighted
-    Birkhoff average of its crossings' turns) is a rational p/q, q <= 12, to 1e-4, and every q-th crossing stays in one
-    island, an arc of angle about the axis narrower than the 2 pi / q of q islands side by side. Else 0."""
+    Birkhoff average of its crossings' turns) is a rational p/q, q <= q_max, to 1e-4, and every q-th crossing stays in
+    one island, an arc of angle about the axis narrower than the 2 pi / q of q islands side by side. Else 0."""
     from fractions import Fraction
     R, Z = p.R[i, plane, :p.followed[i]], p.Z[i, plane, :p.followed[i]]
     if p.left[i] or not np.all(np.isfinite(R)):

@@ -29,9 +29,10 @@ scale, no words.  Everything drawn comes from the answer and its source:
                                           certificate rules out any surface, each followed until it leaves the machine
                                           or nears a coil
     anything else                      -> the source alone: torux claims nothing about the plasma, so none is drawn
-    an answer that holds no source     -> ValueError, as answer.plot gives: one read from its JSON, and one that ended
-                                          before the field was built (an error, or the verdict torux.nonstell gives
-                                          on a source that is not a stellarator)
+    an answer that holds no source     -> ValueError before any work, saying why: one read from its JSON (solve
+                                          again), one that ended in an error before the field was built, and the
+                                          proof torux.nonstell gives that a source which is not a stellarator has no
+                                          surface, in the proof's words
 
 Where there is a plasma, a wedge of it is cut away in front of one cross-section (cut=True, the default), and in that
 section the punctures of field lines through it show as points of light: the nested surfaces as rings, the island
@@ -160,9 +161,12 @@ def render(answer, path, *, dark=False, cut=True):
     with a wedge of the plasma cut away in front of one cross-section, or with ``cut=False`` the machine closed.
     Returns the path.  An answer is traced once for each of cut and closed: the other page's picture then takes no
     time, and the second of cut and closed takes the tracing alone."""
+    from .plot import check_folder
     name = os.fspath(path)
     if os.path.splitext(name)[1].lower() != ".png":
         raise ValueError(f"cannot render to {name!r}: name a .png file")
+    check_folder(name)
+    _source(answer)                             # an answer with no coils to draw says so before any work
     images = picture(answer, cut=cut)
     PT.write_png(name, images[bool(dark)])
     return path
@@ -215,9 +219,8 @@ def _source(answer):
     for s in (getattr(answer, "source", None), getattr(getattr(answer, "_engine", None), "source", None)):
         if isinstance(s, Source):
             return s
-    raise ValueError("this answer does not hold its source, so its coils cannot be drawn: one read from a file "
-                     "holds none (solve again to draw it), and nor does one that ended before the field was built (an "
-                     "error, or the verdict on a source that is not a stellarator)")
+    from .answer import without_source
+    raise ValueError(f"nothing to draw: {without_source(answer)}")
 
 
 def content(answer, log=None):
