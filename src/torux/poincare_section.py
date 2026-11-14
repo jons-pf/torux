@@ -1,0 +1,717 @@
+"""Poincaré sections: field lines of a source's own field, traced and recorded where they cross planes of constant
+toroidal angle.
+
+    p = torux.poincare("examples/w7x.json")          # torux chooses where lines start, how many and how far
+    p.plot("w7x.png")                                 # .png, .pdf or .svg, dark=True for a dark page
+    p.R, p.Z                                          # (lines, planes, crossings) in metres, NaN once a line has left
+    p.iota                                            # each line's rotational transform, NaN where it has none
+    p = torux.poincare(src, planes=[0.0, 0.3], lines=24, turns=400, starts=[(1.1, 0.0)])
+
+    s = torux.solve("examples/quasr_0000954.json")
+    s.poincare().plot("q954.png")                     # the same, with the surface torux found drawn over it
+
+Lines start on the outboard side of the magnetic axis in the first plane, evenly from the axis out to the last of
+PROBES trial lines that stayed in the machine, and EDGE_EXTRA beyond it.  Between neighbouring lines that stayed, up
+to CHAINS island chains (the fewest islands first) get an elliptic point by Newton's method on the map of as many
+field periods as the chain has islands, and two lines started round it.  Every plane stands for every plane a whole
+number of field periods from it, so a line crosses each plane once a field period.  The tracer
+(torux.poincare_trace) follows lines to rounding, on an engine whose nodes give the field to rounding down to
+DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the machine where it comes
+nearer a conductor than that, turns back in phi next to a coil or leaves the box round the source.
+
+The rotational transform of a line is its mean turn about the magnetic axis per turn round the machine, signed as
+torux signs iota (VMEC's sign): the weighted Birkhoff average of its turn in each field period.  It converges fast on
+a surface, and to the chain's rational inside an island chain.  Where the average over the first half differs from
+that over the whole by more than IOTA_TOL the line has none: it wanders, or lies so near a resonance that the length
+followed does not settle it.
+
+The poincare of an answer (Answer.poincare) traces the answer's source, starts one more line on its surface, and
+holds what its certificate holds, followed into every plane: an island chain's elliptic points, or the X line an edge
+certificate starts from and the curve its manifolds make, which no surface crosses.
+"""
+from __future__ import annotations
+
+import math
+import time
+
+import numpy as np
+
+LINES = 16                  # lines from the axis to the edge, evenly
+PERIODS = 600               # field periods each line is followed, at least (turns = PERIODS / nfp)
+PROBES = 32                 # lines that find the edge
+PROBE_PERIODS = 80          # field periods a probe is followed
+PROBE_STEPS = 12            # steps per field period of a probe (where it goes, not to rounding)
+DMIN_SHARE = 0.3            # a line nearer a conductor than this share of the axis' distance from it has left
+EDGE_EXTRA = 2              # lines started beyond the last line that stayed, to show where lines leave
+IOTA_TOL = 1e-4             # the Birkhoff averages of the first half of a line with a rotational transform and of
+                            # all of it agree to this, rad a field period. Near a resonance a surface's average settles
+                            # slowly: QUASR 1100073's lines next to the axis, 0.1 % from 1/9 a period, differ by
+                            # 2e-5 to 6e-5 at 600 periods and by 1e-9 to 1e-6 at 4,800. Lines that wander: 4e-4 to 2e-3
+CHAINS = 3                  # island chains looked for, the fewest islands first
+QMAX = 12                   # islands in a chain at most (per plane)
+THIN = 1e-4                 # an elliptic point of smaller residue has islands too thin to draw: no lines round it
+STEP_TOL = 1e-15            # the one-period map's truncation error the steps are chosen for, a share of the axis' R:
+                            # about where the rounding of a period's thousands of field evaluations leaves it
+STEP_CHOICES = (8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256)
+ORDERS = (5,)               # sequences of the extrapolation tried, the cheapest kept: order 10. Order 12 takes fewer
+                            # steps, but on QUASR 954's surface its lines strayed 1.6e-12 m in 600 periods, not 6.5e-13
+
+
+class Poincare:
+    """Field lines of a source traced through planes of constant toroidal angle.
+
+    planes   (P,) the planes' cylindrical angles, rad.  Each stands for every plane a whole number of field periods
+             from it, so a line crosses it once a field period
+    R, Z     (L, P, K): where line i crosses plane j for the k-th time, m.  NaN once the line has left
+    start    (L, 2): R, Z where each line starts, m, in the first plane
+    left     (L,) bool: the line left the machine before it was followed the whole way
+    left_at  (L, 3): R, phi, Z where it left, phi counted on along the line from the first plane, so that
+             phi / (2 pi) is the turns it made first.  NaN for a line that stayed
+    iota     (L,): the line's rotational transform about the magnetic axis, torux's sign. NaN where it has none
+    axis     (P, 2): R, Z of the magnetic axis in each plane, or None where torux found none
+    turns    toroidal turns each line was followed (field periods / nfp)
+    nfp      field periods of the source
+    steps, order  the tracer's steps per field period and its order
+    seconds  how long it took
+    surface_line  the line started on the answer's surface (Answer.poincare), else None
+    held     what the answer's certificate holds, in each plane (Answer.poincare), else None: a dict with
+             "elliptic" (an island chain's elliptic points) or "hyperbolic" (the X line an edge certificate starts
+             from), a list of (k, 2) arrays one a plane, and for an edge certificate "barrier", the curve no surface
+             crosses, (n, 2) a plane with NaN where it breaks
+    """
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+    @property
+    def profile(self):
+        """(n, 2): each line that has a rotational transform, as (distance of its start from the axis in m, iota), in
+        order of the distance.  Without an axis, the distance from the first line's start."""
+        ok = np.isfinite(self.iota)
+        ref = self.axis[0] if self.axis is not None else self.start[0]
+        d = np.hypot(self.start[ok, 0] - ref[0], self.start[ok, 1] - ref[1])
+        o = np.argsort(d)
+        return np.column_stack([d[o], self.iota[ok][o]])
+
+    def plot(self, path=None, *, dark=False):
+        """The crossings in every plane, in ink, on one scale in metres: the matplotlib figure, or with ``path``
+        (.png, .pdf, .svg) the file, whose path is returned. ``dark=True`` for a dark page. The poincare of an answer
+        draws the answer's surface over them: green only where the independent check verified it."""
+        from .plot import poincare_plot
+        return poincare_plot(self, path, dark=dark)
+
+    def __str__(self):
+        L = len(self.start)
+        ok = np.isfinite(self.iota)
+        rows = [("Poincaré section", f"{L} field line{'s' if L != 1 else ''} of {self.source_id} through "
+                                     f"{len(self.planes)} plane{'s' if len(self.planes) != 1 else ''} at phi = "
+                                     + ", ".join(_deg(p) for p in self.planes)),
+                ("followed", f"{_num(self.turns)} turns ({self.periods} field periods) each, or until it left"),
+                ("with an iota", f"{int(ok.sum())}, from {np.nanmin(self.iota):.6g} to {np.nanmax(self.iota):.6g}"
+                                 if ok.any() else "none"),
+                ("left the machine", f"{int(self.left.sum())}"),
+                ("time", f"{self.seconds:.1f} s")]
+        from .answer import _table
+        return _table(rows)
+
+    __repr__ = __str__
+
+    def lines_table(self):
+        """One row a line: where it starts, its rotational transform, or when it left."""
+        head = f"{'line':>4}  {'R (m)':>12}  {'Z (m)':>12}  rotational transform"
+        rows = [head]
+        for i, (st, io) in enumerate(zip(self.start, self.iota)):
+            if self.left[i]:
+                what = f"left after {self.left_at[i, 1] / (2 * np.pi):.4g} turns"
+            elif np.isfinite(io):
+                what = f"{io:.12g}"
+            else:
+                what = f"none settled in {self.periods} field periods"
+            if i == getattr(self, "surface_line", None):
+                what += "   (started on the answer's surface)"
+            rows.append(f"{i + 1:>4}  {st[0]:>12.6f}  {st[1]:>12.6f}  {what}")
+        return "\n".join(rows)
+
+
+def poincare(source, *, planes=None, lines=None, turns=None, starts=None):
+    """Field lines of ``source``'s own field, traced through planes of constant toroidal angle (a torux.Poincare).
+
+    source   anything torux.load reads, or a torux.Source
+    planes   cylindrical angles of the planes, rad (default: the start, a quarter and a half of a field period)
+    lines    how many lines start from the magnetic axis out to the edge, evenly (default 16). torux adds lines in
+             the island chains it finds and two beyond the edge
+    turns    toroidal turns each line is followed (default: 600 field periods)
+    starts   (n, 2): R, Z in m where lines start in the first plane, instead of torux's choice
+    """
+    from .source import Source
+    from .sources import load
+    src = source if isinstance(source, Source) else load(source)
+    return _poincare(src, None, planes, lines, turns, starts)
+
+
+def of_answer(answer, *, planes=None, lines=None, turns=None, starts=None):
+    """Answer.poincare: the answer's source, with a line started on the answer's surface."""
+    from .source import Source
+    src = None
+    for s in (getattr(answer, "source", None), getattr(getattr(answer, "_engine", None), "source", None)):
+        if isinstance(s, Source):
+            src = s
+            break
+    if src is None:
+        raise ValueError("this answer does not hold its source (it was read from a file or settled by proof): solve "
+                         "the source again for its field lines")
+    return _poincare(src, answer, planes, lines, turns, starts)
+
+
+# ------------------------------------------------------------------------------------------------ the whole call
+def _poincare(src, answer, planes, lines, turns, starts):
+    from .poincare_trace import Schedule, Tracer
+    t_start = time.time()
+    nfp = int(src.nfp) if float(src.nfp) >= 1 and float(src.nfp).is_integer() else 1
+    period = 2 * np.pi / nfp
+    phi_ref = float(getattr(answer.surface, "phi0", 0.0)) if answer is not None and answer.surface is not None else 0.0
+    planes = _planes(planes, period, phi_ref)
+    nper = _periods(turns, nfp)
+    if lines is not None and (int(lines) != lines or lines < 1):
+        raise ValueError(f"lines={lines!r}: give how many lines start from the axis to the edge, at least 1")
+    if starts is not None:
+        if lines is not None:
+            raise ValueError("give lines= or starts=, not both: starts= says where every line starts")
+        starts = np.asarray(starts, float).reshape(-1, 2) if np.size(starts) else np.zeros((0, 2))
+        if not len(starts) or not np.all(np.isfinite(starts)) or np.any(starts[:, 0] <= 0):
+            raise ValueError("starts= takes (R, Z) pairs in metres with R > 0, at least one")
+    phi0 = planes[0]
+    rel = np.mod(planes - phi0, period)
+    order = np.argsort(rel)
+    box, size = _box(src)
+    tm = {}
+    t = time.time()
+    axis = _axis(_engine(src, answer), src, answer, nfp)
+    eng = _engine(src, None, _dmin(src, axis, phi0))
+    tm["axis"], t = time.time() - t, time.time()
+    sign = _sign(eng, src, axis, phi0, box)
+    tr = Tracer(eng, box, eng.dmin, sign)
+    ax_at = None if axis is None else axis
+    if starts is None:
+        seeds, steps = _choose_starts(tr, src, axis, phi0, period, box, size, LINES if lines is None else int(lines),
+                                      nper, nfp)
+    else:
+        seeds, steps = starts, _steps(tr, starts[:4], phi0, period, ax_at, starts[0, 0])
+    tm["starts"], t = time.time() - t, time.time()
+    on_surface = None
+    if answer is not None and getattr(answer, "surface", None) is not None and starts is None:
+        seeds = np.concatenate([seeds, [_on_surface(answer, axis, phi0)]])
+        on_surface = len(seeds) - 1
+    sc_main = Schedule(rel[order], period, steps, ax_at, phi0)
+    o = tr.run(seeds, sc_main, nper, phi0)
+    tm["lines"], t = time.time() - t, time.time()
+    if seeds is not starts and axis is not None:
+        extra = _chain_starts(tr, o, seeds, src, axis, phi0, period, nfp, size, steps)
+        tm["chains"], t = time.time() - t, time.time()
+        if len(extra):
+            o2 = tr.run(extra, sc_main, nper, phi0)
+            tm["chain lines"], t = time.time() - t, time.time()
+            seeds = np.concatenate([seeds, extra])
+            o = {k: np.concatenate([o[k], o2[k]]) for k in ("R", "Z", "wind", "lost", "periods", "stop")}
+        # in order of the distance from the axis along the start line, as a profile reads
+        a0 = np.asarray(axis(np.array([phi0])), float).ravel()
+        s = np.argsort(np.hypot(seeds[:, 0] - a0[0], seeds[:, 1] - a0[1]), kind="stable")
+        seeds = seeds[s]
+        if on_surface is not None:
+            on_surface = int(np.flatnonzero(s == on_surface)[0])
+        o = {k: o[k][s] for k in ("R", "Z", "wind", "lost", "periods", "stop")}
+    inv = np.empty_like(order)
+    inv[order] = np.arange(len(order))
+    R, Z = o["R"][:, inv], o["Z"][:, inv]
+    held = _held(answer, tr, planes, period, steps) if answer is not None else None
+    tm["certificate"] = time.time() - t
+    iota, spread = _iota(o["wind"], period, spread=True) if axis is not None else (np.full(len(seeds), np.nan),) * 2
+    left = o["lost"] & (o["periods"] < nper)
+    iota[left] = np.nan
+    ax_planes = None
+    if axis is not None:
+        aR, aZ = axis(planes)
+        ax_planes = np.column_stack([aR, aZ])
+    return Poincare(planes=planes, R=R, Z=Z, start=np.array(seeds, float), left=left,
+                    left_at=np.where(left[:, None], o["stop"], np.nan), iota=iota, axis=ax_planes,
+                    turns=nper / nfp, periods=nper, nfp=nfp, source_id=str(src.id), seconds=time.time() - t_start,
+                    steps=steps, order=2 * tr.k, surface_line=on_surface, held=held, _answer=answer, _source=src,
+                    _spread=spread, _timings=tm, _nodes=eng.info.n_nodes)
+
+
+def _through(tr, pts, phi_s, planes, period, steps, nper):
+    """Points (n, 2) in the plane phi_s followed through every plane for nper field periods: (n, P, nper) R and Z,
+    the planes in the order given."""
+    from .poincare_trace import Schedule
+    rel = np.mod(planes - phi_s, period)
+    rel = np.where(rel < 1e-12, 0.0, rel)
+    # the schedule starts at phi_s itself: a plane there is reached at the end of each period
+    cuts = [0.0] + sorted(r for r in rel if r > 0)
+    sc = Schedule(np.array(cuts), period, steps, None, phi_s)
+    o = tr.run(np.asarray(pts, float).reshape(-1, 2), sc, nper, phi_s)
+    col = {c: k for k, c in enumerate(cuts)}          # Schedule numbers the plane at cuts[k] k, the period's end 0
+    R = np.stack([o["R"][:, col[r]] for r in rel], 1)
+    Z = np.stack([o["Z"][:, col[r]] for r in rel], 1)
+    return R, Z
+
+
+def _held(answer, tr, planes, period, steps):
+    """What an island-chain or edge certificate holds, followed into every plane (Poincare.held), or None."""
+    c = (answer.evidence or {}).get("certificate") or {}
+    kind = str(c.get("kind", ""))
+    try:
+        if kind.startswith("island_band"):
+            line = c.get("O_line") or {}
+            pts = np.asarray(line.get("points") or [], float).reshape(-1, 2)
+            q = int((c.get("chain") or {}).get("q") or len(pts))
+            if not len(pts) or q < 1:
+                return None
+            R, Z = _through(tr, pts[:1], float(c.get("phi_s", 0.0)), planes, period, steps, q)
+            return dict(elliptic=[np.column_stack([R[0, j], Z[0, j]]) for j in range(len(planes))])
+        if kind.startswith("edge_barrier"):
+            orbit = c.get("orbit") or {}
+            pts = np.asarray(orbit.get("points") or [], float).reshape(-1, 2)
+            q = int(orbit.get("q") or len(pts))
+            phi_s = float(c.get("plane_phi", 0.0))
+            out = {}
+            if len(pts) and q >= 1:
+                R, Z = _through(tr, pts[:1], phi_s, planes, period, steps, q)
+                out["hyperbolic"] = [np.column_stack([R[0, j], Z[0, j]]) for j in range(len(planes))]
+            poly = np.asarray(c.get("polygon") or [], float).reshape(-1, 2)
+            if len(poly):
+                poly = poly[::max(1, len(poly) // 2000)]
+                R, Z = _through(tr, poly, phi_s, planes, period, steps, 1)
+                out["barrier"] = [np.column_stack([R[:, j, 0], Z[:, j, 0]]) for j in range(len(planes))]
+            return out or None
+    except (TypeError, ValueError, KeyError):
+        return None
+    return None
+
+
+def _on_surface(answer, axis, phi0):
+    """(R, Z) of the answer's surface in the first plane where the start line crosses it: outboard of the axis at
+    the axis' height, found by bisection on the surface's poloidal angle.  Where it has no such crossing, theta = 0."""
+    from .plot import _surface_points
+
+    def at(th):
+        x = _surface_points(answer, np.atleast_1d(th), np.full(np.size(th), phi0))
+        return np.hypot(x[:, 0], x[:, 1]), x[:, 2]
+    th = np.linspace(0.0, 2 * np.pi, 1025)
+    R, Z = at(th)
+    if axis is not None:
+        aR, aZ = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+        f = Z - aZ
+        k = np.flatnonzero((np.sign(f[:-1]) != np.sign(f[1:])) & (0.5 * (R[:-1] + R[1:]) > aR))
+        if len(k):
+            a, b = th[k[0]], th[k[0] + 1]
+            fa = f[k[0]]
+            for _ in range(60):
+                m = 0.5 * (a + b)
+                fm = at(m)[1][0] - aZ
+                if np.sign(fm) == np.sign(fa):
+                    a, fa = m, fm
+                else:
+                    b = m
+            Rm, Zm = at(0.5 * (a + b))
+            return [float(Rm[0]), float(Zm[0])]
+    return [float(R[0]), float(Z[0])]
+
+
+def _planes(planes, period, phi_ref):
+    if planes is None:
+        return phi_ref + np.array([0.0, 0.25, 0.5]) * period
+    p = np.atleast_1d(np.asarray(planes, float)).ravel()
+    if not len(p) or not np.all(np.isfinite(p)):
+        raise ValueError("planes= takes the cylindrical angles of one or more planes, in radians")
+    rel = np.mod(p - p[0], period)
+    rel = np.where(np.isclose(rel, period, rtol=0, atol=1e-12), 0.0, rel)
+    if len(np.unique(np.round(rel, 12))) != len(p):
+        raise ValueError("planes= holds two planes a whole number of field periods apart: they are the same plane")
+    return p
+
+
+def _periods(turns, nfp):
+    if turns is None:
+        return int(math.ceil(PERIODS / nfp)) * nfp
+    t = float(turns)
+    if not (t > 0 and math.isfinite(t)):
+        raise ValueError(f"turns={turns!r}: give the toroidal turns each line is followed, a positive number")
+    return max(1, int(round(t * nfp)))
+
+
+def _engine(src, answer, dmin=None):
+    if answer is not None and getattr(answer, "_engine", None) is not None:
+        return answer._engine
+    from .field import FieldEngine
+    return FieldEngine(src, dmin=dmin or src.meta.get("dmin", 0.05))
+
+
+def _dmin(src, axis, phi0):
+    """The distance from the conductors beyond which the field is computed to rounding, and nearer which a line
+    has left the machine: DMIN_SHARE of the magnetic axis' distance from the nearest conductor, at least the
+    source's own (a QUASR design's: a fifth of its coils' distance from its outermost surface)."""
+    own = float(src.meta.get("dmin", 0.05))
+    x = _conductor_points(src)
+    if axis is None or not len(x):
+        return own
+    from scipy.spatial import cKDTree
+    ph = phi0 + np.linspace(0.0, 2 * np.pi, 257)[:-1]
+    R, Z = axis(ph)
+    d = float(cKDTree(x).query(np.column_stack([R * np.cos(ph), R * np.sin(ph), Z]))[0].min())
+    return max(own, DMIN_SHARE * d)
+
+
+def _deg(phi):
+    from .plot import _plain
+    return _plain(round(math.degrees(phi), 6)) + "°"
+
+
+def _num(x):
+    return f"{x:.0f}" if float(x).is_integer() else f"{x:.3g}"
+
+
+# ------------------------------------------------------------------------------------------------ the source
+def _conductor_points(src):
+    """Points on every conductor of the source (m), for its extent."""
+    pts = []
+    for part in src.parts:
+        if part.kind == "fourier":
+            x, _ = part.points(np.linspace(0.0, 1.0, 257))
+            pts.append(x.reshape(-1, 3))
+        elif part.kind == "polyline":
+            pts.append(np.asarray(part.points, float).reshape(-1, 3))
+        elif part.kind == "segments":
+            pts += [np.asarray(part.a, float), np.asarray(part.b, float)]
+        elif part.kind == "dipoles":
+            pts.append(np.asarray(part.pos, float))
+        elif part.kind == "rings":
+            t = np.linspace(0.0, 2 * np.pi, 65)
+            for R, Z in zip(np.atleast_1d(part.R), np.atleast_1d(part.Z)):
+                pts.append(np.column_stack([R * np.cos(t), R * np.sin(t), np.full_like(t, Z)]))
+        elif part.kind == "axipoly":
+            for V in getattr(part, "vertices", []) or []:
+                V = np.asarray(V, float).reshape(-1, 2)
+                pts.append(np.column_stack([V[:, 0], np.zeros(len(V)), V[:, 1]]))
+    return np.concatenate(pts) if pts else np.zeros((0, 3))
+
+
+def _box(src):
+    """(Rmin, Rmax, Zmin, Zmax) a little larger than the conductors' extent, and the extent's size (m)."""
+    x = _conductor_points(src)
+    if not len(x):
+        return np.array([1e-6, 1e6, -1e6, 1e6]), 1.0
+    R = np.hypot(x[:, 0], x[:, 1])
+    lo, hi = np.array([R.min(), x[:, 2].min()]), np.array([R.max(), x[:, 2].max()])
+    size = float(max(hi - lo))
+    pad = 0.05 * size
+    return np.array([max(1e-6, lo[0] - pad), hi[0] + pad, lo[1] - pad, hi[1] + pad]), size
+
+
+def _sign(eng, src, axis, phi0, box):
+    """The sign of B_phi where the lines go: at the axis, else in the middle of the box."""
+    if axis is not None:
+        R, Z = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+    else:
+        R, Z = 0.5 * (box[0] + box[1]), 0.5 * (box[2] + box[3])
+    c, s = math.cos(phi0), math.sin(phi0)
+    B = np.asarray(eng.evaluate(np.array([[R * c, R * s, Z]]), grad=False, A=False)["B"], float)[0]
+    bp = -B[0] * s + B[1] * c
+    return 1.0 if bp >= 0 else -1.0
+
+
+def _axis(eng, src, answer, nfp):
+    """The magnetic axis as a callable phi -> (R, Z), or None: from the answer's evidence when it holds the axis,
+    else found as torux.solve finds it (the elliptic period-one line nearest the conductors' median radius)."""
+    if answer is not None:
+        f = _axis_of_answer(answer, eng, nfp)
+        if f is not None:
+            return f
+    from .analysis import find_axes
+    from .axis_general import find_axes_general
+    try:
+        axes = find_axes(eng, src) if src.stellsym else find_axes_general(eng, src)
+    except Exception:  # noqa: BLE001
+        return None
+    ell = [a for a in axes if 0 < a.residue < 1]
+    if not ell:
+        return None
+    pts = src.sample_points()
+    Rm = float(np.median(np.hypot(pts[:, 0], pts[:, 1]))) if len(pts) else 1.0
+    ax = min(ell, key=lambda a: abs(float(np.ravel(a.at(np.array([0.0]))[0])[0]) - Rm))
+    return lambda phi: tuple(np.asarray(v, float) for v in ax.at(np.atleast_1d(np.asarray(phi, float))))
+
+
+def _axis_of_answer(answer, eng, nfp):
+    """The elliptic axis the solver's evidence holds, checked to run along the field."""
+    T = answer.surface
+    axes = ((answer.evidence or {}).get("solver") or {}).get("axes") or []
+    periods = list(dict.fromkeys(v for v in (int(round(float(getattr(T, "nfp", nfp)))), nfp) if v >= 1)) \
+        if T is not None else [nfp]
+    origins = list(dict.fromkeys((float(getattr(T, "phi0", 0.0)) if T is not None else 0.0, 0.0)))
+    test = np.linspace(0.0, 2 * np.pi, 7)[:-1]
+    best = None
+    for a in axes:
+        try:
+            c = {k: np.asarray(a.get(k, ()), float).ravel() for k in ("rc", "rs", "zc", "zs")}
+        except (TypeError, ValueError):
+            continue
+        n = len(c["rc"])
+        if not n or len(c["zs"]) != n:
+            continue
+        for k in ("rs", "zc"):
+            if len(c[k]) != n:
+                c[k] = np.zeros(n)
+        res = a.get("residue")
+        if res is None or not 0 < float(res) < 1:
+            continue
+        for q in periods:
+            for p0 in origins:
+                def at(phi, c=c, q=q, p0=p0, n=n):
+                    ang = np.outer(q * (np.atleast_1d(np.asarray(phi, float)) - p0), np.arange(n))
+                    C, S = np.cos(ang), np.sin(ang)
+                    return C @ c["rc"] + S @ c["rs"], C @ c["zc"] + S @ c["zs"]
+                if _along_field(eng, at, test) and best is None:
+                    best = at
+    return best
+
+
+def _along_field(eng, at, phis, tol=1e-6):
+    h = 1e-6
+    R, Z = at(phis)
+    R1, Z1 = at(phis + h)
+    R0, Z0 = at(phis - h)
+    dR, dZ = (R1 - R0) / (2 * h), (Z1 - Z0) / (2 * h)
+    c, s = np.cos(phis), np.sin(phis)
+    t = np.column_stack([dR * c - R * s, dR * s + R * c, dZ])
+    B = np.asarray(eng.evaluate(np.column_stack([R * c, R * s, Z]), grad=False, A=False)["B"], float)
+    x = np.linalg.norm(np.cross(t, B), axis=-1) / (np.linalg.norm(t, axis=-1) * np.linalg.norm(B, axis=-1))
+    return bool(np.all(np.isfinite(x)) and np.all(x < tol))
+
+
+# ------------------------------------------------------------------------------------------------ where lines start
+def _steps(tr, y, phi0, period, axis, Rscale):
+    """Steps per field period, and the extrapolation's order, for an error of STEP_TOL of Rscale in a field period at
+    the least cost: for k in ORDERS, the one-period map of the lines y in n and in 2n steps differ by the error of n
+    steps (2^(2k) times that of 2n), measured at the first n of STEP_CHOICES where it is clear of rounding, and the
+    error falls as n^-(2k) from there.  The tracer is left at the order chosen."""
+    from .poincare_trace import Schedule
+    y = np.asarray(y, float).reshape(-1, 2)
+
+    def end(n):
+        o = tr.run(y, Schedule([0.0], period, n, None, phi0), 1, phi0)
+        return np.column_stack([o["R"][:, 0, 0], o["Z"][:, 0, 0]])
+
+    def need():
+        for n in STEP_CHOICES:
+            a, b = end(n), end(2 * n)
+            ok = np.all(np.isfinite(a), -1) & np.all(np.isfinite(b), -1)
+            if not ok.any():
+                return 24                   # no line to measure on stays a period: the lines go nowhere either way
+            diff = float(np.max(np.abs(a[ok] - b[ok]))) / Rscale
+            if diff < 1e-10:
+                m = n * max(1.0, diff / STEP_TOL) ** (1.0 / (2 * tr.k))
+                return int(next((c for c in STEP_CHOICES if c >= m), STEP_CHOICES[-1]))
+        return STEP_CHOICES[-1]
+    best = None
+    for k in ORDERS:
+        tr.set_order(k)
+        n = need()
+        if best is None or (1 + k * k) * n < (1 + best[0] ** 2) * best[1]:
+            best = (k, n)
+    tr.set_order(best[0])
+    return best[1]
+
+
+def _ray(tr, axis, phi0, box):
+    """The start line: from the axis outward along R in the first plane, as far as the box or the conductors let
+    a line start (m)."""
+    aR, aZ = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+    r = np.linspace(0.0, box[1] - aR, 2001)[1:]
+    R = aR + r
+    if len(tr.nodes) and tr.dstop > 0:
+        from scipy.spatial import cKDTree
+        x = np.column_stack([R * math.cos(phi0), R * math.sin(phi0), np.full_like(R, aZ)])
+        near = cKDTree(tr.nodes).query(x)[0] < 2 * tr.dstop
+        if near.any():
+            r = r[:max(1, int(np.argmax(near)))]
+    return aR, aZ, float(r[-1])
+
+
+def _choose_starts(tr, src, axis, phi0, period, box, size, nlines, nper, nfp):
+    """Where lines start: evenly on the start line from the axis out to the last of PROBES lines that stayed for
+    PROBE_PERIODS, and EDGE_EXTRA beyond it.  Without an axis, evenly across the middle of the box."""
+    from .poincare_trace import Schedule
+    if axis is None:
+        R = np.linspace(box[0], box[1], nlines + 2)[1:-1]
+        Z = np.full(nlines, 0.5 * (box[2] + box[3]))
+        y = np.column_stack([R, Z])
+        return y, _steps(tr, y[::max(1, nlines // 4)], phi0, period, None, float(np.median(R)))
+    aR, aZ, rmax = _ray(tr, axis, phi0, box)
+    r = rmax * np.arange(1, PROBES + 1) / PROBES
+    probe = np.column_stack([aR + r, np.full(PROBES, aZ)])
+    o = tr.run(probe, Schedule([0.0], period, PROBE_STEPS, None, phi0), PROBE_PERIODS, phi0)
+    stayed = ~o["lost"]
+    last = r[np.flatnonzero(stayed)[-1]] if stayed.any() else r[0]
+    # the steps are chosen on the inner half, where surfaces are: further out, nearer the coils, a period's error
+    # may be a few times larger, which over a line's length stays far below what a picture or a profile can show
+    steps = _steps(tr, np.column_stack([aR + last * np.array([0.15, 0.3, 0.45]), np.full(3, aZ)]), phi0, period,
+                   axis, aR)
+    rs = last * np.arange(1, nlines + 1) / nlines
+    beyond = r[(r > last) & ~stayed][:EDGE_EXTRA]
+    rs = np.concatenate([rs, beyond])
+    return np.column_stack([aR + rs, np.full(len(rs), aZ)]), steps
+
+
+# ------------------------------------------------------------------------------------------------ island chains
+def _chain_starts(tr, o, seeds, src, axis, phi0, period, nfp, size, steps):
+    """Starts inside the island chains among the lines: for the CHAINS rationals p/q (q <= QMAX islands) between the
+    mean turns per period of two neighbouring lines that stayed, the fewest islands first, and no line already goes
+    round, an elliptic fixed point of the q-period map by Newton's method from points between the two lines, then
+    lines started on the segment from it outward, at the largest distance whose line still turns p/q times a period
+    and inside it."""
+    from fractions import Fraction
+    stayed = np.flatnonzero(~o["lost"] & (o["periods"] > 0))
+    n = np.maximum(o["periods"], 1)
+    mean = np.array([(o["wind"][i, n[i]] - o["wind"][i, 0]) / n[i] for i in range(len(seeds))]) / (2 * np.pi)
+    aR, aZ = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+    d = np.hypot(seeds[:, 0] - aR, seeds[:, 1] - aZ)
+    ok = stayed[np.argsort(d[stayed])]
+    wanted = []
+    for i, j in zip(ok[:-1], ok[1:]):
+        slack = 2.0 / min(n[i], n[j])
+        lo, hi = min(mean[i], mean[j]) - slack, max(mean[i], mean[j]) + slack
+        for q in range(1, QMAX + 1):
+            for p in range(math.ceil(lo * q), math.floor(hi * q) + 1):
+                f = Fraction(p, q)
+                if f.denominator == q and all(f != w[0] for w in wanted):
+                    wanted.append((f, i, j))
+    wanted.sort(key=lambda w: (w[0].denominator, abs(float(w[0]))))
+    # a chain a line already goes round (its mean turn the chain's to within what its length can tell) is drawn
+    wanted = [w for w in wanted if not np.any(np.abs(mean[stayed] - float(w[0])) < 1.0 / n[stayed])]
+    out = []
+    for f, i, j in wanted[:CHAINS]:
+        found = _elliptic_point(tr, o, i, j, f, mean, axis, phi0, period, steps)
+        if found is None or abs(found[1]) < THIN:
+            continue                    # no elliptic point, or islands far thinner than a pixel
+        out += _island_lines(tr, found[0], o, j, f, axis, phi0, period, steps, size)
+    return np.array(out).reshape(-1, 2)
+
+
+def _curve(o, i, a0):
+    """Line i's crossings of the first plane as (angle about a0, distance from a0), sorted by angle."""
+    R, Z = o["R"][i, 0], o["Z"][i, 0]
+    k = np.isfinite(R)
+    th = np.arctan2(Z[k] - a0[1], R[k] - a0[0])
+    rr = np.hypot(Z[k] - a0[1], R[k] - a0[0])
+    s = np.argsort(th)
+    return th[s], rr[s]
+
+
+def _radius(curve, th):
+    t, r = curve
+    if len(t) < 8:
+        return np.full(np.shape(th), np.nan)
+    return np.interp(np.mod(th + np.pi, 2 * np.pi) - np.pi, t, r, period=2 * np.pi)
+
+
+def _map(tr, y, q, phi0, period, steps):
+    from .poincare_trace import Schedule
+    o = tr.run(y, Schedule([0.0], period, steps, None, phi0), q, phi0)
+    return np.column_stack([o["R"][:, 0, q - 1], o["Z"][:, 0, q - 1]])
+
+
+def _elliptic_point(tr, o, i, j, f, mean, axis, phi0, period, steps, guesses=4, its=6):
+    """A fixed point of the q-period map between lines i and j with |trace| < 2, by Newton's method from points
+    between the two lines (their crossings interpolated at the share where p/q lies), and its residue (2 - trace) / 4,
+    or None."""
+    q = f.denominator
+    aR, aZ = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+    ci, cj = _curve(o, i, (aR, aZ)), _curve(o, j, (aR, aZ))
+    th = 2 * np.pi * (np.arange(guesses) + 0.5) / guesses
+    ri, rj = _radius(ci, th), _radius(cj, th)
+    rho = mean[[i, j]]
+    w = float(np.clip((float(f) - rho[0]) / (rho[1] - rho[0]), 0.1, 0.9)) if rho[1] != rho[0] else 0.5
+    rr = ri + w * (rj - ri)
+    x = np.column_stack([aR + rr * np.cos(th), aZ + rr * np.sin(th)])
+    x = x[np.all(np.isfinite(x), -1)]
+    scale = float(np.nanmax(rj)) if np.isfinite(rj).any() else 0.1
+    h = 1e-7 * scale
+    for _ in range(its):
+        if not len(x):
+            return None
+        y = np.concatenate([x, x + [h, 0.0], x + [0.0, h]])
+        m = _map(tr, y, q, phi0, period, steps).reshape(3, len(x), 2)
+        F = m[0] - x
+        J = np.stack([(m[1] - m[0]) / h, (m[2] - m[0]) / h], -1)          # J[:, :, c] = d map / d x_c
+        good = np.all(np.isfinite(F), -1) & np.all(np.isfinite(J.reshape(len(x), -1)), -1)
+        x, F, J = x[good], F[good], J[good]
+        if not len(x):
+            return None
+        A = J - np.eye(2)
+        det = A[:, 0, 0] * A[:, 1, 1] - A[:, 0, 1] * A[:, 1, 0]
+        dx = np.column_stack([A[:, 1, 1] * F[:, 0] - A[:, 0, 1] * F[:, 1],
+                              -A[:, 1, 0] * F[:, 0] + A[:, 0, 0] * F[:, 1]]) / np.where(det == 0, np.nan, det)[:, None]
+        n = np.linalg.norm(dx, axis=-1)
+        dx = np.where((n > 0.2 * scale)[:, None], dx * (0.2 * scale / np.maximum(n, 1e-300))[:, None], dx)
+        x = x - dx
+        tr_ = J[:, 0, 0] + J[:, 1, 1]
+        done = np.isfinite(n) & (n < 1e-11 * scale) & (np.abs(tr_) < 2)
+        if done.any():
+            k = np.flatnonzero(done)[0]
+            return x[k], float((2.0 - tr_[k]) / 4.0)
+        x = x[np.all(np.isfinite(x), -1)]
+    return None
+
+
+def _island_lines(tr, O, o, j, f, axis, phi0, period, steps, size, tries=6, look=80):
+    """Starts round the elliptic point O of the chain p/q: on the segment from O away from the axis, at half and nine
+    tenths of the largest distance (of 2^-k of the way to line j, k = 1 .. tries) whose line turns p/q times a period
+    over ``look`` periods.  Nothing when no such line is wider than a thousandth of the source's size."""
+    aR, aZ = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
+    th = math.atan2(O[1] - aZ, O[0] - aR)
+    rO = math.hypot(O[1] - aZ, O[0] - aR)
+    rj = float(_radius(_curve(o, j, (aR, aZ)), np.array([th]))[0])
+    if not np.isfinite(rj) or rj <= rO:
+        return []
+    u = np.array([math.cos(th), math.sin(th)])
+    t = (rj - rO) * 0.5 ** np.arange(1, tries + 1)
+    y = O[None, :] + t[:, None] * u
+    from .poincare_trace import Schedule
+    sc = Schedule([0.0], period, steps, axis, phi0)
+    r = tr.run(y, sc, look, phi0)
+    rho = np.array([_birkhoff(np.diff(w)) if np.all(np.isfinite(w)) else np.nan for w in r["wind"]]) / (2 * np.pi)
+    inside = np.isfinite(rho) & (np.abs(rho - float(f)) < 1e-6) & ~r["lost"]
+    if not inside.any():
+        return []
+    w = float(t[np.flatnonzero(inside)[0]])
+    if w < 1e-3 * size:
+        return []
+    return [O + 0.5 * w * u, O + 0.9 * w * u]
+
+
+# ------------------------------------------------------------------------------------------------ rotational transform
+def _iota(wind, period, spread=False):
+    """The rotational transform of each line from its angle about the axis at the end of each field period: the
+    weighted Birkhoff average of the turn in each period over the whole line.  NaN where it has not settled: where
+    the average over the first half differs from it by more than IOTA_TOL (a line on a surface or an island converges,
+    one that wanders does not), or where the line has fewer than 64 periods.  spread: also that difference."""
+    wind = np.asarray(wind, float)
+    out = np.full(len(wind), np.nan)
+    gap = np.full(len(wind), np.nan)
+    for i, w in enumerate(wind):
+        k = np.isfinite(w)
+        n = int(np.argmin(k)) if not k.all() else len(w)
+        d = np.diff(w[:n])
+        if len(d) < 64:
+            continue
+        whole = _birkhoff(d)
+        gap[i] = abs(_birkhoff(d[:len(d) // 2]) - whole)
+        if gap[i] < IOTA_TOL:
+            out[i] = whole / period
+    return (out, gap) if spread else out
+
+
+def _birkhoff(d):
+    t = (np.arange(len(d)) + 0.5) / len(d)
+    w = np.exp(-1.0 / (t * (1.0 - t)))
+    return float(np.sum(w * d) / np.sum(w))

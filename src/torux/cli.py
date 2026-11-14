@@ -9,6 +9,8 @@
                [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
     torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
                  [--nfp N] [--kind K] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
+    torux poincare SOURCE [FILE] [--planes DEG [DEG ...]] [--lines N] [--turns N] [--start R,Z ...] [--dark]
+                   [--nfp N] [--coils NAME] [--currents saved|dofs]
     torux version
 
 solve prints the answer on stdout and, with --save, writes it: *.json (everything), input.<name> (VMEC input, cut
@@ -20,7 +22,8 @@ writes its picture (answer.render), with the same exit code, or 1 where no pictu
 --coils and --currents are torux.load's which= and currents= for a SIMSOPT JSON source: which coil set of a file
 holding several (with several files, --coils once per file, - for one that needs none), and which of a Current
 object's two values where they differ.  In many, given once they apply to every design, and given once per SOURCE,
-in order, each to its own design, - for one that needs none.  check's --which is the surface's, and
+in order, each to its own design, - for one that needs none.  poincare prints its lines (where each starts, its
+rotational transform, whether it left) and with FILE draws them.  check's --which is the surface's, and
 --surface-currents and --mismatched-coils are check's surface_currents= and mismatched_coils=True.
 """
 from __future__ import annotations
@@ -273,6 +276,68 @@ def _many(a):
     return main(a)
 
 
+def _poincare_args(sub):
+    s = sub.add_parser("poincare", help="field lines through planes of constant toroidal angle, and their picture",
+                       description="Field lines of the source's own field, traced through planes of constant toroidal "
+                                   "angle: where each line starts, its rotational transform and whether it left the "
+                                   "machine. With FILE, the picture. torux chooses where lines start, how many and "
+                                   "how far they go, unless told.")
+    s.add_argument("files", nargs="+", metavar="SOURCE",
+                   help="a coil or magnet file, or quasr:NUMBER, then optionally FILE: the picture, .png, .pdf or "
+                        ".svg")
+    s.add_argument("--planes", type=float, nargs="+", metavar="DEG",
+                   help="the planes' toroidal angles in degrees (default: the start, a quarter and a half of a field "
+                        "period)")
+    s.add_argument("--lines", type=int, metavar="N", help="lines started from the magnetic axis to the edge (default "
+                                                          "16), besides those torux adds in island chains")
+    s.add_argument("--turns", type=float, metavar="N", help="toroidal turns each line is followed (default: 600 "
+                                                            "field periods)")
+    s.add_argument("--start", action="append", metavar="R,Z", help="a line starting here (m) in the first plane, "
+                                                                   "instead of torux's choice. May be given more "
+                                                                   "than once")
+    s.add_argument("--dark", action="store_true", help="draw FILE for a dark page")
+    s.add_argument("--nfp", type=int, metavar="N", help="field periods, where the format does not state them")
+    from .check import add_source_choices
+    add_source_choices(s)
+
+
+def _poincare(a):
+    import math
+    import os
+    import torux
+    files, picture = list(a.files), None
+    if len(files) > 1 and os.path.splitext(files[-1])[1].lower() in (".png", ".pdf", ".svg"):
+        picture = files.pop()
+    try:
+        if picture is not None:
+            from .plot import check_path
+            check_path(picture)
+        starts = None
+        if a.start:
+            try:
+                starts = [tuple(float(v) for v in s.split(",")) for s in a.start]
+            except ValueError:
+                starts = [()]
+            if any(len(s) != 2 for s in starts):
+                raise ValueError("--start takes R,Z in metres, for example --start 1.1,0")
+        from .check import source_choices
+        src = torux.load(*files, nfp=a.nfp, **source_choices(a))
+        p = torux.poincare(src, planes=None if a.planes is None else [math.radians(v) for v in a.planes],
+                           lines=a.lines, turns=a.turns, starts=starts)
+    except Exception as e:  # noqa: BLE001
+        print(f"error   {e}", file=sys.stderr)
+        return 1
+    print(p)
+    print("\n" + p.lines_table())
+    if picture is not None:
+        try:
+            p.plot(picture, dark=a.dark)
+        except (ImportError, OSError, ValueError) as e:
+            print(f"error   {e}", file=sys.stderr)
+            return 1
+    return 0
+
+
 def _version_args(sub):
     sub.add_parser("version", help="print the version")
 
@@ -285,7 +350,8 @@ def _version(a):
 
 # subcommand: (add its parser to the subparsers, run it on the parsed arguments and return the exit code)
 COMMANDS = {"solve": (_solve_args, _solve), "check": (_check_args, _check), "many": (_many_args, _many),
-            "render": (_render_args, _render), "version": (_version_args, _version)}
+            "render": (_render_args, _render), "poincare": (_poincare_args, _poincare),
+            "version": (_version_args, _version)}
 
 
 class _Parser(argparse.ArgumentParser):

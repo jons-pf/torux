@@ -755,3 +755,215 @@ def _shown_by():
 def _metadata(ext):
     return {".png": {"Software": None}, ".pdf": {"Creator": None, "Producer": None, "CreationDate": None},
             ".svg": {"Creator": None, "Date": None}}[ext]
+
+
+# ------------------------------------------------------------------------------------------------ Poincaré sections
+DOT_PT = 0.62               # a crossing's diameter, points
+GAP_PANELS = 0.18           # inches between two planes' panels
+SECTION_MAX_H = 4.2         # inches: the panels' height when the width would make them taller
+
+
+def poincare_plot(p, path=None, *, dark=False):
+    """The crossings of a torux.Poincare in each of its planes, in ink, side by side on one scale in metres: the
+    matplotlib figure, or with ``path`` (.png, .pdf, .svg) the file, whose path is returned.  The poincare of an
+    answer draws the answer's surface over them, green where the independent check verified it, and what its
+    certificate holds."""
+    ext = check_path(path)
+    q = _poincare_picture(p)
+    if path is not None:
+        fig = _poincare_figure(q, dark)
+        fig.savefig(os.fspath(path), dpi=FILE_DPI, facecolor=fig.get_facecolor(), metadata=_metadata(ext))
+        return path
+    shown = _shown_by()
+    fig = _poincare_figure(q, dark, pyplot=shown is not None)
+    if shown == "window":
+        fig.show()
+    return fig
+
+
+def _poincare_picture(p):
+    """What the figure draws, from a Poincare: the crossings of each plane, the axis, the answer's sections and
+    marks, and the windows and layout."""
+    q = _Picture()
+    q.planes = np.asarray(p.planes, float)
+    P = len(q.planes)
+    q.dots = []
+    for j in range(P):
+        R, Z = np.asarray(p.R)[:, j].ravel(), np.asarray(p.Z)[:, j].ravel()
+        k = np.isfinite(R) & np.isfinite(Z)
+        q.dots.append(np.column_stack([R[k], Z[k]]))
+    q.axis = None if p.axis is None else np.asarray(p.axis, float)
+    q.sections, q.verified, q.marks = None, False, [np.zeros((0, 2)) for _ in range(P)]
+    q.mark_kind, q.barrier = "o", None
+    a = getattr(p, "_answer", None)
+    if a is not None and getattr(a, "surface", None) is not None:
+        q.verified = _verified(a)
+        th = np.linspace(0.0, 2 * np.pi, 1025)
+        q.sections = []
+        for ph in q.planes:
+            x = _surface_points(a, th, np.full_like(th, ph))
+            q.sections.append(np.column_stack([np.hypot(x[:, 0], x[:, 1]), x[:, 2]]))
+    if a is not None:
+        q.marks = _certificate_marks(p, q.planes)
+        held = getattr(p, "held", None) or {}
+        q.mark_kind = "x" if held.get("hyperbolic") is not None else "o"
+        q.barrier = held.get("barrier")
+    # each plane's window: the crossings of the lines that stayed, the sections and the marks, with room round them
+    # for the first crossings of lines that left (the rest of those is cut at the frame), on one scale and one Z range
+    stayed = ~np.asarray(p.left, bool)
+    every = []
+    for j in range(P):
+        R, Z = np.asarray(p.R)[stayed, j].ravel(), np.asarray(p.Z)[stayed, j].ravel()
+        k = np.isfinite(R) & np.isfinite(Z)
+        b = q.barrier[j][np.all(np.isfinite(q.barrier[j]), -1)] if q.barrier is not None else np.zeros((0, 2))
+        e = np.concatenate([np.column_stack([R[k], Z[k]])] + ([q.sections[j]] if q.sections else []) + [q.marks[j], b]
+                           + ([q.axis[j:j + 1]] if q.axis is not None else []))
+        # no line that stayed crosses this plane: its window holds the crossings there are, else where lines start
+        every.append(e if len(e) else (q.dots[j] if len(q.dots[j]) else np.asarray(p.start, float).reshape(-1, 2)))
+    span = max(max(float(np.ptp(e[:, 0])) for e in every), float(np.ptp(np.concatenate([e[:, 1] for e in every]))))
+    if not span > 0:
+        span = 0.1 * max(1e-3, float(np.max(np.abs(np.concatenate(every)))))
+    m = 0.08 * span
+    q.Rr = []
+    for j, e in enumerate(every):
+        lo, hi = float(e[:, 0].min()) - m, float(e[:, 0].max()) + m
+        drawn = np.concatenate([e, q.dots[j]])          # no wider than everything drawn needs
+        q.Rr.append((max(lo, float(drawn[:, 0].min()) - 0.02 * span), min(hi, float(drawn[:, 0].max()) + 0.02 * span)))
+        if not q.Rr[-1][1] - q.Rr[-1][0] > 0.1 * span:
+            mid = 0.5 * (q.Rr[-1][0] + q.Rr[-1][1])
+            q.Rr[-1] = (mid - 0.05 * span, mid + 0.05 * span)
+    Zall = np.concatenate([e[:, 1] for e in every])
+    Aall = np.concatenate([Zall] + [d[:, 1] for d in q.dots])
+    q.Zr = (max(float(Zall.min()) - m, float(Aall.min()) - 0.02 * span),
+            min(float(Zall.max()) + m, float(Aall.max()) + 0.02 * span))
+    if not q.Zr[1] - q.Zr[0] > 0.1 * span:
+        mid = 0.5 * (q.Zr[0] + q.Zr[1])
+        q.Zr = (mid - 0.05 * span, mid + 0.05 * span)
+    _poincare_layout(q)
+    return q
+
+
+def _certificate_marks(p, planes):
+    """(k, 2) points to mark in each plane from what an answer's certificate holds (Poincare.held): an island
+    chain's elliptic points, or the X line an edge certificate starts from; nothing else."""
+    held = getattr(p, "held", None) or {}
+    for k in ("elliptic", "hyperbolic"):
+        if held.get(k) is not None:
+            return [np.asarray(m, float)[np.all(np.isfinite(m), -1)] for m in held[k]]
+    return [np.zeros((0, 2)) for _ in planes]
+
+
+def _poincare_layout(q):
+    """The panels side by side on one scale, as wide as the page allows, no taller than SECTION_MAX_H (where that
+    holds the scale down, each panel's R window widens about its middle to fill the page), with MARGIN of page round
+    the ink on every side: the Z ticks and label left of the first panel, the R ticks under each and one R label under
+    them all, each plane's angle above it.  The ink outside the panels is measured on a drawing of the frame alone,
+    and the layout made again until it fits."""
+    P = len(q.planes)
+    base = list(q.Rr)
+    widths = [b - a for a, b in base]
+    zh = q.Zr[1] - q.Zr[0]
+    out = [0.6, 0.15, R_LABEL + 0.1, TITLE + 0.05]          # ink beyond the panels: left, right, bottom, top
+    for _ in range(6):
+        avail = WIDTH - 2 * MARGIN - out[0] - out[1] - GAP_PANELS * (P - 1)
+        scale = min(avail / sum(widths), SECTION_MAX_H / zh)
+        grow = avail / (scale * sum(widths))
+        q.Rr = [(0.5 * (a + b) - 0.5 * grow * (b - a), 0.5 * (a + b) + 0.5 * grow * (b - a)) for a, b in base]
+        h = scale * zh
+        x = MARGIN + out[0]
+        q.panels = []
+        for a, b in q.Rr:
+            q.panels.append((x, MARGIN + out[2], scale * (b - a), h))
+            x += scale * (b - a) + GAP_PANELS
+        q.size = (WIDTH, MARGIN + out[2] + h + out[3] + MARGIN)
+        ink = _frame_ink(q)
+        first, last = q.panels[0], q.panels[-1]
+        new = [first[0] - ink[0], ink[1] - (last[0] + last[2]), first[1] - ink[2], ink[3] - (first[1] + h)]
+        if max(abs(a - b) for a, b in zip(new, out)) < 0.5 / FILE_DPI:
+            break
+        out = new
+
+
+def _frame_ink(q, dpi=FILE_DPI):
+    """Where the frame of a Poincaré figure (spines, ticks, words: no crossings) puts ink on a light page: left,
+    right, bottom, top, inches from the page's bottom left."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    c = PAGES[False]
+    keep = q.dots, q.sections, q.marks, q.axis, q.barrier
+    q.dots, q.sections, q.marks, q.axis, q.barrier = [np.zeros((0, 2))] * len(q.planes), None, \
+        [np.zeros((0, 2))] * len(q.planes), None, None
+    try:
+        fig = _poincare_figure(q, False)
+    finally:
+        q.dots, q.sections, q.marks, q.axis, q.barrier = keep
+    fig.set_dpi(dpi)
+    FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    rgb = np.asarray(fig.canvas.buffer_rgba())[..., :3].astype(int)
+    rows, cols = np.nonzero(np.any(np.abs(rgb - np.round(_rgb(c["page"]) * 255)) > 3, axis=-1))
+    h = rgb.shape[0]
+    return cols.min() / dpi, (cols.max() + 1) / dpi, (h - rows.max() - 1) / dpi, (h - rows.min()) / dpi
+
+
+def _poincare_figure(q, dark, pyplot=False):
+    from matplotlib.figure import Figure
+    c = PAGES[bool(dark)]
+    if pyplot:
+        import matplotlib.pyplot as plt
+        fig = plt.figure(figsize=q.size, dpi=100, facecolor=c["page"])
+    else:
+        fig = Figure(figsize=q.size, dpi=100, facecolor=c["page"])
+    W, H = q.size
+    font = _font()
+    for j, rect in enumerate(q.panels):
+        ax = fig.add_axes((rect[0] / W, rect[1] / H, rect[2] / W, rect[3] / H))
+        _poincare_panel(ax, q, j, rect, c, font)
+    first, last = q.panels[0], q.panels[-1]
+    fig.text((0.5 * (first[0] + last[0] + last[2])) / W, (first[1] - R_LABEL) / H, "R (m)", color=c["muted"],
+             fontsize=LABEL_PT, fontfamily=font, ha="center", va="baseline")
+    return fig
+
+
+def _poincare_panel(ax, q, j, rect, c, font):
+    d = q.dots[j]
+    if len(d):
+        ax.scatter(d[:, 0], d[:, 1], s=DOT_PT ** 2, c=c["ink"], marker="o", linewidths=0, zorder=2,
+                   rasterized=True)
+    if q.sections is not None:
+        s = q.sections[j]
+        if q.verified:
+            ax.plot(s[:, 0], s[:, 1], color=c["line"], lw=1.3, solid_joinstyle="round", zorder=3)
+        else:
+            ax.plot(s[:, 0], s[:, 1], color=c["muted"], lw=1.3, ls=(0, (3.2, 2.4)), dash_capstyle="butt", zorder=3)
+    if q.barrier is not None:
+        b = q.barrier[j]
+        ax.plot(b[:, 0], b[:, 1], color=c["muted"], lw=0.9, solid_joinstyle="round", zorder=3)
+    m = q.marks[j]
+    if len(m):
+        if q.mark_kind == "x":
+            ax.plot(m[:, 0], m[:, 1], ls="none", marker="x", ms=4.6, mew=1.1, color=c["ink"], zorder=4)
+        else:
+            ax.plot(m[:, 0], m[:, 1], ls="none", marker="o", ms=4.6, mew=1.0, mfc=c["page"], mec=c["ink"], zorder=4)
+    if q.axis is not None:
+        ax.plot([q.axis[j, 0]], [q.axis[j, 1]], ls="none", marker="+", ms=5.5, mew=0.9, color=c["muted"], zorder=4)
+    ax.set_xlim(*q.Rr[j])
+    ax.set_ylim(*q.Zr)
+    ax.set_facecolor("none")
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.spines["left"].set_visible(j == 0)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(c["rule"])
+        ax.spines[side].set_linewidth(0.8)
+    rt, rl = _ticks(q.Rr[j][0], q.Rr[j][1], rect[2], font, along=True, most=4)
+    ax.set_xticks(rt, rl)
+    if j == 0:
+        zt, zl = _ticks(q.Zr[0], q.Zr[1], rect[3], font, along=False)
+        ax.set_yticks(zt, zl)
+        ax.set_ylabel("Z (m)", color=c["muted"], fontsize=LABEL_PT, fontfamily=font, labelpad=2)
+    else:
+        ax.set_yticks([])
+    ax.tick_params(colors=c["rule"], labelcolor=c["muted"], labelsize=LABEL_PT, width=0.8, length=3, pad=2,
+                   labelfontfamily=font[0])
+    ax.set_title(f"φ = {_plain(round(math.degrees(q.planes[j]), 4))}°", color=c["muted"], fontsize=LABEL_PT,
+                 fontfamily=font, loc="left", pad=4)

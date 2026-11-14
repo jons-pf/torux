@@ -10,6 +10,7 @@
     s.system_general(rc, rs, zc, zs, iota)     # the same without stellarator symmetry
     s.vjp_general(rc, rs, zc, zs, iota, lam)
     s.save("input.mine")                       # VMEC input (VMEC, VMEC++, DESC, SIMSOPT). Also *.json, *.vtk
+    s.poincare().plot("section.png")           # field lines through planes of constant phi, the surface over them
     torux.Answer.read("answer.json")           # an answer saved as JSON, back
 
 An Answer is a torux.Result: status, surface, evidence, record, points and field keep their meaning.  Its words and
@@ -324,6 +325,14 @@ class Answer(Result):
         file, or a proof) raises ValueError.  torux.render says what each mark is."""
         from .render import render
         return render(self, path, dark=dark, cut=cut)
+
+    def poincare(self, *, planes=None, lines=None, turns=None, starts=None):
+        """Field lines of the answer's source traced through planes of constant toroidal angle, as torux.poincare
+        traces them, with one more line started on the answer's surface (a torux.Poincare). Its plot draws the
+        surface over the crossings, green only where the independent check verified it, and what a certificate
+        holds. Needs the source: an answer read from a file has none, solve again."""
+        from .poincare_section import of_answer
+        return of_answer(self, planes=planes, lines=lines, turns=turns, starts=starts)
 
     def boozer(self):
         """|B| on the surface in Boozer angles: its harmonics in tesla and its quasi-symmetry (a

@@ -14,6 +14,8 @@
     s.render("closed.png", cut=False)                  # the same with the machine closed, no section opened
     torux.check("coils.json", "wout_mine.nc")          # how close another code's surface is to a flux surface
     torux.many(files, table="answers.csv")             # many designs at once, each in its own process
+    torux.poincare("coils.json").plot("section.png")   # field lines through planes of constant toroidal angle
+    s.poincare().plot("section.png")                   # the same, with the surface torux found over them
 
     s.status        'surface' | 'no_surface' | 'range' | 'undetermined' | 'no_axis' | 'timeout' | 'error', or
                     'surface_unverified' / 'range_unverified'
@@ -106,6 +108,8 @@ from .api import Request, Result  # noqa: E402
 from .answer import Answer, solve  # noqa: E402
 from .check import Check, check  # noqa: E402
 from .batch import many  # noqa: E402
+from .poincare_section import Poincare, poincare  # noqa: E402
 
-__all__ = ["solve", "load", "check", "many", "Answer", "Check", "Request", "Result", "Source", "FourierCurves",
-           "PolylineCurves", "Segments", "Dipoles", "Rings", "AxisymPolygons", "ToroidalField", "__version__"]
+__all__ = ["solve", "load", "check", "many", "poincare", "Answer", "Check", "Poincare", "Request", "Result", "Source",
+           "FourierCurves", "PolylineCurves", "Segments", "Dipoles", "Rings", "AxisymPolygons", "ToroidalField",
+           "__version__"]
