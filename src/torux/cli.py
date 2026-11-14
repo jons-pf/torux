@@ -23,7 +23,8 @@ writes its picture (answer.render), with the same exit code, or 1 where no pictu
 holding several (with several files, --coils once per file, - for one that needs none), and which of a Current
 object's two values where they differ.  In many, given once they apply to every design, and given once per SOURCE,
 in order, each to its own design, - for one that needs none.  poincare prints its lines (where each starts, its
-rotational transform, whether it left) and with FILE draws them.  check's --which is the surface's, and
+rotational transform, whether it left) and with FILE draws them, and where the lines take more than half a minute
+says on stderr about how long first.  check's --which is the surface's, and
 --surface-currents and --mismatched-coils are check's surface_currents= and mismatched_coils=True.
 """
 from __future__ import annotations
@@ -321,9 +322,14 @@ def _poincare(a):
             if any(len(s) != 2 for s in starts):
                 raise ValueError("--start takes R,Z in metres, for example --start 1.1,0")
         from .check import source_choices
+        from . import ask
         src = torux.load(*files, nfp=a.nfp, **source_choices(a))
-        p = torux.poincare(src, planes=None if a.planes is None else [math.radians(v) for v in a.planes],
-                           lines=a.lines, turns=a.turns, starts=starts)
+        ask.say = _say
+        try:
+            p = torux.poincare(src, planes=None if a.planes is None else [math.radians(v) for v in a.planes],
+                               lines=a.lines, turns=a.turns, starts=starts)
+        finally:
+            ask.say = None
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1

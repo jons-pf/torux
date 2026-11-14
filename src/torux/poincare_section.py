@@ -14,10 +14,13 @@ Lines start on the outboard side of the magnetic axis in the first plane, evenly
 PROBES trial lines that stayed in the machine, and EDGE_EXTRA beyond it.  Between neighbouring lines that stayed, up
 to CHAINS island chains (the fewest islands first) get an elliptic point by Newton's method on the map of as many
 field periods as the chain has islands, and two lines started round it.  Every plane stands for every plane a whole
-number of field periods from it, so a line crosses each plane once a field period.  The tracer
-(torux.poincare_trace) follows lines to rounding, on an engine whose nodes give the field to rounding down to
-DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the machine where it comes
-nearer a conductor than that, turns back in phi next to a coil or leaves the box round the source.
+number of field periods from it, so a line crosses each plane once a field period.  A line on a surface whose
+crossings still leave a gap along its curve wider than CLOSE_GAP of the plane is followed on, up to CLOSE_CAP times
+as far, until the curve closes (_close).  The tracer (torux.poincare_trace) follows lines with a field within 1e-14
+of an engine whose nodes give it to rounding down to DMIN_SHARE of the magnetic axis' distance from the nearest
+conductor: a line has left the machine where it comes nearer a conductor than that, turns back in phi next to a coil
+or leaves the box round the source.  Where the lines will take more than SAY_AFTER seconds the call says first about
+how long (_say_how_long).
 
 The rotational transform of a line is its mean turn about the magnetic axis per turn round the machine, signed as
 torux signs iota (VMEC's sign): the weighted Birkhoff average of its turn in each field period.  It converges fast on
@@ -50,11 +53,19 @@ IOTA_TOL = 1e-4             # the Birkhoff averages of the first half of a line 
 CHAINS = 3                  # island chains looked for, the fewest islands first
 QMAX = 12                   # islands in a chain at most (per plane)
 THIN = 1e-4                 # an elliptic point of smaller residue has islands too thin to draw: no lines round it
+KEYS = ("R", "Z", "wind", "lost", "periods", "stop", "y")
+SAY_AFTER = 30.0            # seconds of tracing past which the call says how long it will take
+SAY_PERIODS = 4             # field periods traced to tell
+CLOSE_GAP = 0.01            # a curve is closed to the eye when no two of its crossings next along it are further apart
+                            # than this share of the plane's extent: 3 px of an 838 px picture's panel, 1 of a phone's
+CLOSE_CAP = 4               # a line on a surface whose crossings do not yet close its curve is followed for up to this
+                            # many times the length the others are
 STEP_TOL = 1e-15            # the one-period map's truncation error the steps are chosen for, a share of the axis' R:
                             # about where the rounding of a period's thousands of field evaluations leaves it
 STEP_CHOICES = (8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256)
-ORDERS = (5,)               # sequences of the extrapolation tried, the cheapest kept: order 10. Order 12 takes fewer
-                            # steps, but on QUASR 954's surface its lines strayed 1.6e-12 m in 600 periods, not 6.5e-13
+ORDERS = (5, 6)             # sequences of the extrapolation tried (orders 10, 12), the cheapest for its steps kept.
+                            # Order 14 saves a tenth more, and on QUASR 954's surface its lines strayed 3e-11 m in
+                            # 1,200 periods, ten times as far
 
 
 class Poincare:
@@ -62,14 +73,17 @@ class Poincare:
 
     planes   (P,) the planes' cylindrical angles, rad.  Each stands for every plane a whole number of field periods
              from it, so a line crosses it once a field period
-    R, Z     (L, P, K): where line i crosses plane j for the k-th time, m.  NaN once the line has left
+    R, Z     (L, P, K): where line i crosses plane j for the k-th time, m.  NaN once the line has left, and past its
+             own length: K is the longest line's
     start    (L, 2): R, Z where each line starts, m, in the first plane
     left     (L,) bool: the line left the machine before it was followed the whole way
     left_at  (L, 3): R, phi, Z where it left, phi counted on along the line from the first plane, so that
              phi / (2 pi) is the turns it made first.  NaN for a line that stayed
     iota     (L,): the line's rotational transform about the magnetic axis, torux's sign. NaN where it has none
     axis     (P, 2): R, Z of the magnetic axis in each plane, or None where torux found none
-    turns    toroidal turns each line was followed (field periods / nfp)
+    turns    toroidal turns each line is followed (field periods / nfp), the most for a line that leaves
+    followed (L,): the field periods each line was followed: turns x nfp, up to CLOSE_CAP times that for a line on a
+             surface whose crossings did not yet close its curve, fewer for a line that left
     nfp      field periods of the source
     steps, order  the tracer's steps per field period and its order
     seconds  how long it took
@@ -106,7 +120,9 @@ class Poincare:
         rows = [("Poincaré section", f"{L} field line{'s' if L != 1 else ''} of {self.source_id} through "
                                      f"{len(self.planes)} plane{'s' if len(self.planes) != 1 else ''} at phi = "
                                      + ", ".join(_deg(p) for p in self.planes)),
-                ("followed", f"{_num(self.turns)} turns ({self.periods} field periods) each, or until it left"),
+                ("followed", f"{_num(self.turns)} turns ({self.periods} field periods) each, or until it left"
+                             + (f", {more} on to up to {int(self.followed.max())} periods to close their curves"
+                                if (more := int(np.sum(self.followed > self.periods))) else "")),
                 ("with an iota", f"{int(ok.sum())}, from {np.nanmin(self.iota):.6g} to {np.nanmax(self.iota):.6g}"
                                  if ok.any() else "none"),
                 ("left the machine", f"{int(self.left.sum())}"),
@@ -126,7 +142,7 @@ class Poincare:
             elif np.isfinite(io):
                 what = f"{io:.12g}"
             else:
-                what = f"none settled in {self.periods} field periods"
+                what = f"none settled in {self.followed[i]} field periods"
             if i == getattr(self, "surface_line", None):
                 what += "   (started on the answer's surface)"
             rows.append(f"{i + 1:>4}  {st[0]:>12.6f}  {st[1]:>12.6f}  {what}")
@@ -189,8 +205,8 @@ def _poincare(src, answer, planes, lines, turns, starts):
     axis = _axis(_engine(src, answer), src, answer, nfp)
     eng = _engine(src, None, _dmin(src, axis, phi0))
     tm["axis"], t = time.time() - t, time.time()
-    sign = _sign(eng, src, axis, phi0, box)
-    tr = Tracer(eng, box, eng.dmin, sign)
+    sign, bref = _sign(eng, src, axis, phi0, box)
+    tr = Tracer(eng, box, eng.dmin, sign, bref=bref, region=_region(src, axis, eng.dmin, box))
     ax_at = None if axis is None else axis
     if starts is None:
         seeds, steps = _choose_starts(tr, src, axis, phi0, period, box, size, LINES if lines is None else int(lines),
@@ -203,6 +219,7 @@ def _poincare(src, answer, planes, lines, turns, starts):
         seeds = np.concatenate([seeds, [_on_surface(answer, axis, phi0)]])
         on_surface = len(seeds) - 1
     sc_main = Schedule(rel[order], period, steps, ax_at, phi0)
+    _say_how_long(tr, seeds, sc_main, nper, phi0, src)
     o = tr.run(seeds, sc_main, nper, phi0)
     tm["lines"], t = time.time() - t, time.time()
     if seeds is not starts and axis is not None:
@@ -212,21 +229,24 @@ def _poincare(src, answer, planes, lines, turns, starts):
             o2 = tr.run(extra, sc_main, nper, phi0)
             tm["chain lines"], t = time.time() - t, time.time()
             seeds = np.concatenate([seeds, extra])
-            o = {k: np.concatenate([o[k], o2[k]]) for k in ("R", "Z", "wind", "lost", "periods", "stop")}
+            o = {k: np.concatenate([o[k], o2[k]]) for k in KEYS}
         # in order of the distance from the axis along the start line, as a profile reads
         a0 = np.asarray(axis(np.array([phi0])), float).ravel()
         s = np.argsort(np.hypot(seeds[:, 0] - a0[0], seeds[:, 1] - a0[1]), kind="stable")
         seeds = seeds[s]
         if on_surface is not None:
             on_surface = int(np.flatnonzero(s == on_surface)[0])
-        o = {k: o[k][s] for k in ("R", "Z", "wind", "lost", "periods", "stop")}
+        o = {k: o[k][s] for k in KEYS}
+    if axis is not None:
+        o, closed = _close(tr, o, sc_main, nper, phi0, period)
+        tm["closing"], t = time.time() - t, time.time()
     inv = np.empty_like(order)
     inv[order] = np.arange(len(order))
     R, Z = o["R"][:, inv], o["Z"][:, inv]
     held = _held(answer, tr, planes, period, steps) if answer is not None else None
     tm["certificate"] = time.time() - t
     iota, spread = _iota(o["wind"], period, spread=True) if axis is not None else (np.full(len(seeds), np.nan),) * 2
-    left = o["lost"] & (o["periods"] < nper)
+    left = o["lost"]
     iota[left] = np.nan
     ax_planes = None
     if axis is not None:
@@ -234,7 +254,8 @@ def _poincare(src, answer, planes, lines, turns, starts):
         ax_planes = np.column_stack([aR, aZ])
     return Poincare(planes=planes, R=R, Z=Z, start=np.array(seeds, float), left=left,
                     left_at=np.where(left[:, None], o["stop"], np.nan), iota=iota, axis=ax_planes,
-                    turns=nper / nfp, periods=nper, nfp=nfp, source_id=str(src.id), seconds=time.time() - t_start,
+                    turns=nper / nfp, periods=nper, followed=np.asarray(o["periods"], int), nfp=nfp,
+                    source_id=str(src.id), seconds=time.time() - t_start,
                     steps=steps, order=2 * tr.k, surface_line=on_surface, held=held, _answer=answer, _source=src,
                     _spread=spread, _timings=tm, _nodes=eng.info.n_nodes)
 
@@ -317,6 +338,25 @@ def _on_surface(answer, axis, phi0):
     return [float(R[0]), float(Z[0])]
 
 
+def _say_how_long(tr, seeds, sc, nper, phi0, src):
+    """Where the lines will take more than SAY_AFTER seconds, how long, from a trace of SAY_PERIODS periods of them:
+    to the logger "torux" at INFO, and through torux.ask.say (the command line writes it to stderr), as a search of
+    torux.solve says what it asks and how long it may take."""
+    t = time.time()
+    tr.run(seeds, sc, SAY_PERIODS, phi0)
+    est = (time.time() - t) / SAY_PERIODS * nper
+    if est > SAY_AFTER:
+        from .ask import _say
+        _say(f"{getattr(src, 'id', None) or 'the source'}: tracing {len(seeds)} field lines through {nper} field "
+             f"periods, about {_duration(est)}, and longer where lines go on to close their curves")
+
+
+def _duration(s):
+    if s < 90:
+        return f"{s:.0f} s"
+    return f"{s / 60:.0f} minutes"
+
+
 def _planes(planes, period, phi_ref):
     if planes is None:
         return phi_ref + np.array([0.0, 0.25, 0.5]) * period
@@ -343,7 +383,8 @@ def _engine(src, answer, dmin=None):
     if answer is not None and getattr(answer, "_engine", None) is not None:
         return answer._engine
     from .field import FieldEngine
-    return FieldEngine(src, dmin=dmin or src.meta.get("dmin", 0.05))
+    # nodes in multiples of 16: the tracer may sum a coil far from a line on every 2nd .. 16th of them
+    return FieldEngine(src, dmin=dmin or src.meta.get("dmin", 0.05), node_multiple=16)
 
 
 def _dmin(src, axis, phi0):
@@ -371,6 +412,27 @@ def _num(x):
 
 
 # ------------------------------------------------------------------------------------------------ the source
+def _region(src, axis, dstop, box, n=1024, rng=None):
+    """n points where lines can go: round the magnetic axis, out to one and a half times its distance from the
+    nearest conductor, no nearer a conductor than dstop (nearer, a line has left).  Without an axis, in the box."""
+    from scipy.spatial import cKDTree
+    rng = rng or np.random.default_rng(1)
+    x = _conductor_points(src)
+    ph = rng.uniform(0.0, 2 * np.pi, 4 * n)
+    if axis is not None:
+        aR, aZ = axis(ph)
+        ring = np.column_stack([aR * np.cos(ph), aR * np.sin(ph), aZ])
+        reach = 1.5 * float(cKDTree(x).query(ring)[0].min()) if len(x) else 1.0
+        rr, th = reach * np.sqrt(rng.uniform(0.0, 1.0, 4 * n)), rng.uniform(0.0, 2 * np.pi, 4 * n)
+        R, Z = aR + rr * np.cos(th), aZ + rr * np.sin(th)
+    else:
+        R, Z = rng.uniform(box[0], box[1], 4 * n), rng.uniform(box[2], box[3], 4 * n)
+    pts = np.column_stack([R * np.cos(ph), R * np.sin(ph), Z])[R > 0]
+    if len(x):
+        pts = pts[cKDTree(x).query(pts)[0] >= dstop]
+    return pts[:n]
+
+
 def _conductor_points(src):
     """Points on every conductor of the source (m), for its extent."""
     pts = []
@@ -408,7 +470,7 @@ def _box(src):
 
 
 def _sign(eng, src, axis, phi0, box):
-    """The sign of B_phi where the lines go: at the axis, else in the middle of the box."""
+    """The sign of B_phi where the lines go, and |B| there: at the axis, else in the middle of the box."""
     if axis is not None:
         R, Z = (float(np.ravel(v)[0]) for v in axis(np.array([phi0])))
     else:
@@ -416,7 +478,7 @@ def _sign(eng, src, axis, phi0, box):
     c, s = math.cos(phi0), math.sin(phi0)
     B = np.asarray(eng.evaluate(np.array([[R * c, R * s, Z]]), grad=False, A=False)["B"], float)[0]
     bp = -B[0] * s + B[1] * c
-    return 1.0 if bp >= 0 else -1.0
+    return (1.0 if bp >= 0 else -1.0), float(np.linalg.norm(B))
 
 
 def _axis(eng, src, answer, nfp):
@@ -560,6 +622,89 @@ def _choose_starts(tr, src, axis, phi0, period, box, size, nlines, nper, nfp):
     beyond = r[(r > last) & ~stayed][:EDGE_EXTRA]
     rs = np.concatenate([rs, beyond])
     return np.column_stack([aR + rs, np.full(len(rs), aZ)]), steps
+
+
+# ------------------------------------------------------------------------------------------------ closed curves
+def _gaps(o, i, rho, spans):
+    """The largest gap between crossings of line i next along its curve, in each plane, as a share of that plane's
+    extent: the crossings ordered by k rho mod 1, the order a turn of rho a period gives points of a curve (exact on
+    an invariant circle, whatever its shape)."""
+    out = []
+    for j in range(o["R"].shape[1]):
+        R, Z = o["R"][i, j], o["Z"][i, j]
+        k = np.flatnonzero(np.isfinite(R))
+        if len(k) < 8:
+            return np.inf
+        s = np.argsort(np.mod((k + 1) * rho, 1.0))
+        x, y = R[k][s], Z[k][s]
+        d = np.hypot(np.diff(np.append(x, x[0])), np.diff(np.append(y, y[0])))
+        out.append(float(d.max()) / spans[j])
+    return max(out)
+
+
+def _island(rho, tol=1e-7, qmax=60):
+    """Whether a mean turn a period of rho is a rational of at most qmax islands, to tol: a line round an island
+    chain, whose crossings are loops apart and close no curve round the axis."""
+    from fractions import Fraction
+    f = Fraction(float(rho)).limit_denominator(qmax)
+    return abs(float(f) - rho) < tol
+
+
+def _close(tr, o, sc, nper, phi0, period):
+    """Lines on a surface (a settled rotational transform, no island chain) whose crossings leave a gap wider than
+    CLOSE_GAP of the plane along their curve are followed on, doubling their length up to CLOSE_CAP times nper, until
+    the gap closes.  A line followed on that leaves is one that left.  Returns the lines' data, now as long as the
+    longest, NaN past each line's own length, and the lines followed on."""
+    L, P = o["R"].shape[:2]
+    spans = []
+    for j in range(P):
+        R, Z = o["R"][:, j], o["Z"][:, j]
+        spans.append(max(float(np.nanmax(R) - np.nanmin(R)), float(np.nanmax(Z) - np.nanmin(Z)), 1e-12))
+    iota = _iota(o["wind"], period)
+    rho = iota * period / (2 * np.pi)
+    gap = {i: _gaps(o, i, rho[i], spans) for i in range(L) if np.isfinite(rho[i]) and not o["lost"][i]
+           and not _island(rho[i])}
+    todo = [i for i, g in gap.items() if g > CLOSE_GAP]
+    followed = list(todo)
+    n = nper
+    while todo and n < CLOSE_CAP * nper:
+        more = min(n, CLOSE_CAP * nper - n)
+        idx = np.array(todo)
+        theta = o["wind"][idx, n]
+        r = tr.run(o["y"][idx], sc, more, phi0, theta0=theta)
+        grow = {}
+        for k in ("R", "Z"):
+            a = np.full((L, P, n + more), np.nan)
+            a[:, :, :o[k].shape[2]] = o[k]
+            a[idx, :, n:] = r[k]
+            grow[k] = a
+        w = np.full((L, n + more + 1), np.nan)
+        w[:, :o["wind"].shape[1]] = o["wind"]
+        w[idx, n + 1:] = r["wind"][:, 1:]
+        grow["wind"] = w
+        o = dict(o, **grow)
+        o["periods"] = o["periods"].copy()
+        o["periods"][idx] = n + r["periods"]
+        o["lost"] = o["lost"].copy()
+        o["lost"][idx] = r["lost"]
+        o["stop"] = o["stop"].copy()
+        o["stop"][idx] = np.where(r["lost"][:, None], r["stop"] + [0.0, n * period, 0.0], np.nan)
+        o["y"] = o["y"].copy()
+        o["y"][idx] = r["y"]
+        n += more
+        rho_now = _iota(o["wind"][idx], period) * period / (2 * np.pi)
+        keep = []
+        for i, rr in zip(todo, rho_now):
+            if not np.isfinite(rr) or o["lost"][i]:
+                continue
+            g = _gaps(o, i, rr, spans)
+            # a ring of dashes closes as the dashes lengthen, the gap falling about in proportion to the length: a
+            # line whose gap would not reach CLOSE_GAP within the cap at the rate it fell is left as it is
+            if g > CLOSE_GAP and g < gap[i] and n * (1.0 + (g - CLOSE_GAP) / (gap[i] - g) * 0.5) <= CLOSE_CAP * nper:
+                keep.append(i)
+            gap[i] = g
+        todo = keep
+    return o, followed
 
 
 # ------------------------------------------------------------------------------------------------ island chains

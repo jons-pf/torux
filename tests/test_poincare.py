@@ -50,28 +50,28 @@ def distance_from_surface(answer, R, Z, phi):
 
 # ------------------------------------------------------------------------------------------------ right
 def test_a_line_started_on_the_verified_surface_stays_on_it(solved_954, section_954):
-    """Every 4th crossing of the line started on the surface, in all three planes over the 600 field periods, lies
-    within 1e-12 m of the surface (6.5e-13 m measured), and the line was never lost."""
+    """Every 4th crossing of the line started on the surface, in all three planes over all its field periods, lies
+    within 1e-11 m of the surface (3.5e-12 m measured over 1,200 periods), and the line was never lost."""
     p, s = section_954, solved_954
     i = p.surface_line
     assert i is not None and not p.left[i]
     worst = 0.0
     for j, phi in enumerate(p.planes):
-        R, Z = p.R[i, j], p.Z[i, j]
-        assert np.all(np.isfinite(R)) and len(R) == p.periods
+        R, Z = p.R[i, j, :p.followed[i]], p.Z[i, j, :p.followed[i]]
+        assert np.all(np.isfinite(R)) and p.followed[i] >= p.periods
         worst = max(worst, distance_from_surface(s, R[::4], Z[::4], phi).max())
-    assert worst < 1e-12, worst
+    assert worst < 1e-11, worst
 
 
 def test_its_rotational_transform_is_the_answers(solved_954, section_954):
-    """The rotational transform of the line on the surface is the answer's to 1e-8 (to 1.6e-10 measured)."""
+    """The rotational transform of the line on the surface is the answer's to 1e-8 (to 1.1e-13 measured)."""
     p = section_954
     assert abs(p.iota[p.surface_line] - solved_954.iota) < 1e-8, (p.iota[p.surface_line], solved_954.iota)
 
 
 def test_the_crossings_are_where_the_independent_tracer_puts_them(section_954):
     """Three lines' crossings of each plane over their first ten turns against torux.reference.trace (its own field,
-    Gauss-Legendre steps, no code shared): within 1e-11 m (5e-15 m measured)."""
+    Gauss-Legendre steps, no code shared): within 1e-11 m (4e-14 m measured)."""
     from torux.reference.trace import poincare as reference
     p = section_954
     src = p._source
@@ -99,19 +99,67 @@ def test_lines_on_surfaces_have_a_profile_and_the_others_none(section_954):
         assert np.all(np.isfinite(p.left_at[i]))
         k = np.isfinite(p.R[i, 0])
         n = int(k.sum())
-        assert n < p.periods and np.all(k[:n]) and not np.any(k[n:])
+        assert n == p.followed[i] and np.all(k[:n]) and not np.any(k[n:])
         assert p.left_at[i, 1] <= 2 * np.pi * (n + 1) / p.nfp + 1e-9
     assert np.all(np.isnan(p.left_at[~p.left]))
     assert p.axis.shape == (3, 2) and np.all(np.isfinite(p.axis))
 
 
+def test_the_lines_field_is_the_engines_to_1e_14(section_954):
+    """Where the lines go (every crossing of every plane, at every field period's copy of it), the field the tracer
+    sums, far coils on fewer nodes, is the engine's to 1e-14 of |B|."""
+    import torux.poincare_section as P
+    from torux.poincare_trace import Tracer
+    p, src = section_954, section_954._source
+    axis = P._axis(P._engine(src, None), src, None, p.nfp)
+    eng = P._engine(src, None, P._dmin(src, axis, 0.0))
+    box, _ = P._box(src)
+    sign, bref = P._sign(eng, src, axis, 0.0, box)
+    tr = Tracer(eng, box, eng.dmin, sign, bref=bref, region=P._region(src, axis, eng.dmin, box))
+    assert np.any(np.isfinite(tr.reach[:, 1:]))                      # it does take fewer nodes somewhere
+    R, Z = p.R.reshape(-1), p.Z.reshape(-1)
+    phi = np.broadcast_to(p.planes[None, :, None], p.R.shape).reshape(-1)
+    k = np.flatnonzero(np.isfinite(R))[::7]
+    phi = phi[k] + 2 * np.pi / p.nfp * (np.arange(len(k)) % p.nfp)
+    x = np.column_stack([R[k] * np.cos(phi), R[k] * np.sin(phi), Z[k]])
+    B = np.asarray(eng.evaluate(x, grad=False, A=False)["B"])
+    err = np.linalg.norm(tr.B_kernel(x) - B, axis=1) / np.linalg.norm(B, axis=1)
+    assert err.max() < 1e-14, err.max()
+
+
+def test_a_curve_means_a_surface(section_954):
+    """Every line with a rotational transform and no island chain closes its curve to within 1 % of the plane's
+    extent in every plane, or was followed on until its gap was seen not to close within the cap."""
+    import torux.poincare_section as P
+    p = section_954
+    spans = [max(np.nanmax(p.R[:, j]) - np.nanmin(p.R[:, j]), np.nanmax(p.Z[:, j]) - np.nanmin(p.Z[:, j]))
+             for j in range(len(p.planes))]
+    o = dict(R=p.R, Z=p.Z)
+    for i in np.flatnonzero(np.isfinite(p.iota) & ~p.left):
+        rho = p.iota[i] / p.nfp
+        if P._island(rho):
+            continue
+        assert P._gaps(o, i, rho, spans) <= P.CLOSE_GAP or p.followed[i] > p.periods, i
+    assert np.any(p.followed > p.periods)                            # 954 has lines it had to follow on
+
+
+def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
+    import torux.ask as A
+    import torux.poincare_section as P
+    said = []
+    monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(A, "say", said.append)
+    torux.poincare(quasr_954, starts=[(1.0, 0.0)], turns=20)
+    assert len(said) == 1 and "field lines through 40 field periods, about" in said[0]
+
+
 # ------------------------------------------------------------------------------------------------ the knobs
 def test_planes_lines_turns_and_starts_are_the_only_knobs(quasr_954):
     p = torux.poincare(quasr_954, planes=[0.3, 0.1], starts=[(1.0, 0.0), (1.05, 0.02)], turns=40)
-    assert p.R.shape == (2, 2, 80) and np.allclose(p.planes, [0.3, 0.1])
+    assert p.R.shape[:2] == (2, 2) and p.R.shape[2] >= 80 and np.allclose(p.planes, [0.3, 0.1])
     assert np.allclose(p.start, [(1.0, 0.0), (1.05, 0.02)])
     q = torux.poincare(quasr_954, lines=4, turns=30)
-    assert q.R.shape[1] == 3 and q.R.shape[2] == 60 and len(q.start) >= 4
+    assert q.R.shape[1] == 3 and q.R.shape[2] >= 60 and len(q.start) >= 4
     with pytest.raises(TypeError):
         torux.poincare(quasr_954, steps=10)
 
@@ -215,7 +263,7 @@ def chain_of(p, i, plane=0):
     Birkhoff average of its crossings' turns) is a rational p/q, q <= 12, to 1e-4, and every q-th crossing stays in one
     island, an arc of angle about the axis narrower than the 2 pi / q of q islands side by side. Else 0."""
     from fractions import Fraction
-    R, Z = p.R[i, plane], p.Z[i, plane]
+    R, Z = p.R[i, plane, :p.followed[i]], p.Z[i, plane, :p.followed[i]]
     if p.left[i] or not np.all(np.isfinite(R)):
         return 0
     th = np.unwrap(np.arctan2(Z - p.axis[plane, 1], R - p.axis[plane, 0]))
