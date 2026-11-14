@@ -604,11 +604,12 @@ class Tracer:
         from . import fast_trace
         return np.asarray(fast_trace.field_B(self.engine, x), float)
 
-    def run(self, y0, schedule, nper, phi0=0.0, theta0=None):
+    def run(self, y0, schedule, nper, phi0=0.0, theta0=None, progress=None):
         """Every line from (R, Z) y0 (L, 2) in the plane phi0 for nper periods (theta0: the angles about the axis it
         has turned so far, to go on from; default the angle of y0).  Returns dict: R, Z (L, P, nper)
         crossings (NaN once stopped), wind (L, nper + 1) the angle about the axis at each period's end (NaN once
-        stopped), lost (L,), periods (L,) completed, stop (L, 3) R, phi, Z where a line stopped (NaN otherwise)."""
+        stopped), lost (L,), periods (L,) completed, stop (L, 3) R, phi, Z where a line stopped (NaN otherwise).
+        progress(periods done, lost): called after each piece of the trace."""
         sc = schedule
         y = np.array(y0, float).reshape(-1, 2)
         L = len(y)
@@ -644,18 +645,22 @@ class Tracer:
                     per = (time.perf_counter() - t) / (n1 - n0)
                     size = int(max(1, min(4 * size, CHUNK_S / max(per, 1e-9))))
                     n0 = n1
+                    if progress is not None:
+                        progress(n0, lost)
             stop = np.column_stack([sR, sp - phi0, sZ])
         elif L:
-            self._run_numpy(y, comp, theta, lost, done, stop, sc, nper, phi0, dstop2, recR, recZ, wind)
+            self._run_numpy(y, comp, theta, lost, done, stop, sc, nper, phi0, dstop2, recR, recZ, wind, progress)
         for i in range(L):
             wind[i, done[i] + 1:] = np.nan
         stop[~lost] = np.nan
         return dict(R=recR, Z=recZ, wind=wind, lost=lost, periods=done, stop=stop, y=y)
 
-    def _run_numpy(self, y, comp, theta, lost, done, stop, sc, nper, phi0, dstop2, recR, recZ, wind):
+    def _run_numpy(self, y, comp, theta, lost, done, stop, sc, nper, phi0, dstop2, recR, recZ, wind, progress=None):
         from scipy.spatial import cKDTree
         tree = cKDTree(self.nodes) if dstop2 > 0 else None
         for n in range(nper):
+            if progress is not None and n:
+                progress(n, lost)
             for si in range(sc.n):
                 act = np.flatnonzero(~lost)
                 if not len(act):

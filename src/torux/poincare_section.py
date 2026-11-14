@@ -22,8 +22,9 @@ surface whose curve is still open then (or round a chain of more than ISLANDS is
 (Poincare.open).  The tracer (torux.poincare_trace) follows lines with a field within 1e-14 of an engine whose nodes
 give it to rounding down to DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the
 machine where it comes nearer a conductor than that, turns back in phi next to a coil or leaves the box round the
-source.  Where the lines will take more than SAY_AFTER seconds the call says first about how long (_say_how_long),
-and again before lines are followed on.  Ctrl-C stops it within seconds, as a KeyboardInterrupt.
+source.  Where the lines will take more than SAY_AFTER seconds the call says about how long once they have been
+traced SAY_CHECK seconds (_say_how_long), and again before lines are followed on.  Ctrl-C stops it within seconds, as
+a KeyboardInterrupt.
 
 The rotational transform of a line is its mean turn about the magnetic axis per turn round the machine, signed as
 torux signs iota (VMEC's sign): the weighted Birkhoff average of its turn in each field period.  It converges fast on
@@ -61,7 +62,7 @@ QMAX = 12                   # islands in a chain at most (per plane)
 THIN = 1e-4                 # an elliptic point of smaller residue has islands too thin to draw: no lines round it
 KEYS = ("R", "Z", "wind", "lost", "periods", "stop", "y")
 SAY_AFTER = 30.0            # seconds of tracing past which the call says how long it will take
-SAY_PERIODS = 4             # field periods traced to tell
+SAY_CHECK = 2.0             # seconds of tracing after which the call tells, from the lines still going
 ISLANDS = 120               # islands a period in a chain a line is told to go round, at most: W7-X's lines at the edge
                             # go round chains of 71 and 77 (rotational transforms 75/71 and 85/77)
 CLOSE_PX = 2.0              # a curve is closed to the eye when no two of its crossings next along it are further apart
@@ -265,8 +266,7 @@ def _poincare(src, answer, planes, lines, turns, starts):
         seeds = np.concatenate([seeds, [_on_surface(answer, axis, phi0)]])
         on_surface = len(seeds) - 1
     sc_main = Schedule(rel[order], period, steps, ax_at, phi0)
-    _say_how_long(tr, seeds, sc_main, nper, phi0, src)
-    o = tr.run(seeds, sc_main, nper, phi0)
+    o = tr.run(seeds, sc_main, nper, phi0, progress=_say_how_long(seeds, nper, src))
     tm["lines"], t = time.time() - t, time.time()
     if seeds is not starts and axis is not None:
         extra = _chain_starts(tr, o, seeds, src, axis, phi0, period, nfp, size, steps)
@@ -387,19 +387,25 @@ def _on_surface(answer, axis, phi0):
     return [float(R[0]), float(Z[0])]
 
 
-def _say_how_long(tr, seeds, sc, nper, phi0, src):
-    """Where the lines will take more than SAY_AFTER seconds, how long, from a trace of SAY_PERIODS periods of them:
-    to the logger "torux" at INFO, and through torux.ask.say (the command line writes it to stderr), as a search of
-    torux.solve says what it asks and how long it may take."""
-    t = time.time()
-    o = tr.run(seeds, sc, SAY_PERIODS, phi0)
-    # the lines that left in these periods cost nothing further
-    est = (time.time() - t) / SAY_PERIODS * nper * float(np.mean(~o["lost"]))
-    if est > SAY_AFTER:
-        from .ask import _say
-        n = len(seeds)
-        _say(f"{getattr(src, 'id', None) or 'the source'}: tracing {n} field line{'s' if n != 1 else ''} through "
-             f"{nper} field periods, about {_duration(est)}, then more for any lines it follows on")
+def _say_how_long(seeds, nper, src):
+    """A progress for Tracer.run: once the lines have been traced SAY_CHECK seconds, where those still going will take
+    more than SAY_AFTER seconds in all, how long, to the logger "torux" at INFO and through torux.ask.say (the command
+    line writes it to stderr), as a search of torux.solve says what it asks and how long it may take."""
+    t0, said = time.time(), []
+
+    def progress(done, lost):
+        took = time.time() - t0
+        if said or took < SAY_CHECK:
+            return
+        said.append(True)
+        alive = float(np.mean(~np.asarray(lost, bool)))
+        est = took + took / done * (nper - done) * alive       # the lines that left cost nothing further
+        if est > SAY_AFTER:
+            from .ask import _say
+            n = len(seeds)
+            _say(f"{getattr(src, 'id', None) or 'the source'}: tracing {n} field line{'s' if n != 1 else ''} through "
+                 f"{nper} field periods, about {_duration(est)}, then more for any lines it follows on")
+    return progress
 
 
 def _duration(s):

@@ -24,7 +24,7 @@ holding several (with several files, --coils once per file, - for one that needs
 object's two values where they differ.  In many, given once they apply to every design, and given once per SOURCE,
 in order, each to its own design, - for one that needs none.  poincare prints its lines (where each starts, its
 rotational transform, whether it left) and with FILE draws them, and where the lines take more than half a minute
-says on stderr about how long first.  --start is given once per line.  check's --which is the surface's, and
+says on stderr about how long.  --start is given once per line.  check's --which is the surface's, and
 --surface-currents and --mismatched-coils are check's surface_currents= and mismatched_coils=True.  render and
 poincare check that FILE can be written before any work, and Ctrl-C ends them in one line, with code 130.  Each
 subcommand is a pair of functions in COMMANDS.

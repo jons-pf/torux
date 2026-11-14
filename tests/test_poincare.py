@@ -210,6 +210,7 @@ def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
     import torux.poincare_section as P
     said = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", said.append)
     torux.poincare(quasr_954, starts=[(1.0, 0.0)], turns=20)
     assert "tracing 1 field line through 40 field periods, about" in said[0]
@@ -226,6 +227,7 @@ def test_ctrl_c_stops_a_trace_within_seconds(quasr_954, ctrl_c, monkeypatch):
     import torux.poincare_section as P
     sent = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", lambda text: sent.append(ctrl_c(1.0)))
     with pytest.raises(KeyboardInterrupt):
         torux.poincare(quasr_954, starts=[tuple(map(float, s.split(","))) for s in EIGHT], turns=2500)
@@ -298,6 +300,7 @@ def test_a_source_whose_lines_do_not_go_round_says_so_before_any_tracing(monkeyp
     from torux.source import Rings, Source
     said = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", said.append)
     with pytest.raises(ValueError, match="no field line goes round the machine"):
         torux.poincare(example("d3d_icoils_upper.dat"))
@@ -314,11 +317,16 @@ def test_a_source_whose_lines_do_not_go_round_says_so_before_any_tracing(monkeyp
 @needs_mpl
 def test_lines_of_a_field_without_an_axis_start_across_the_machine(monkeypatch, tmp_path):
     """A tokamak's 1/R field and two rings, torux not told: lines start across the box round the conductors, not
-    within a few centimetres of the rings' radius, they leave as they do, and the picture has its panels."""
+    within a few centimetres of the rings' radius, they leave as they do, the call says no time it will not take, and
+    the picture has its panels."""
     from torux.source import Rings, Source, ToroidalField
     src = Source(id="tokamak", parts=[ToroidalField(RB=2.0), Rings(R=[2.0, 2.0], Z=[0.8, -0.8], current=[5e4, 5e4])],
                  nfp=1, stellsym=True)
+    import torux.ask as A
+    said = []
+    monkeypatch.setattr(A, "say", said.append)
     p = torux.poincare(src)
+    assert said == []                           # seconds of tracing: no word of minutes first
     assert p.axis is None and np.ptp(p.start[:, 0]) > 0.5
     fig = p.plot()
     assert all(any(len(c.get_offsets()) for c in ax.collections) for ax in fig.axes)
