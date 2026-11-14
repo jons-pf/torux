@@ -22,8 +22,8 @@ surface whose curve is still open then (or round a chain of more than ISLANDS is
 (Poincare.open).  The tracer (torux.poincare_trace) follows lines with a field within 1e-14 of an engine whose nodes
 give it to rounding down to DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the
 machine where it comes nearer a conductor than that, turns back in phi next to a coil or leaves the box round the
-source.  Where the lines will take more than SAY_AFTER seconds the call says about how long once they have been
-traced SAY_CHECK seconds (_say_how_long), and again before lines are followed on.  Ctrl-C stops it within seconds, as
+source.  Where lines still go after a sixteenth of their length and will take more than SAY_AFTER seconds, the call
+says then about how long (_say_how_long), and before lines are followed on, how far.  Ctrl-C stops it within seconds, as
 a KeyboardInterrupt.
 
 The rotational transform of a line is its mean turn about the magnetic axis per turn round the machine, signed as
@@ -62,7 +62,7 @@ QMAX = 12                   # islands in a chain at most (per plane)
 THIN = 1e-4                 # an elliptic point of smaller residue has islands too thin to draw: no lines round it
 KEYS = ("R", "Z", "wind", "lost", "periods", "stop", "y")
 SAY_AFTER = 30.0            # seconds of tracing past which the call says how long it will take
-SAY_CHECK = 2.0             # seconds of tracing after which the call tells, from the lines still going
+SAY_PERIODS = 16            # the call tells how long after this share of the lines' length (8 to 64 periods)
 ISLANDS = 120               # islands a period in a chain a line is told to go round, at most: W7-X's lines at the edge
                             # go round chains of 71 and 77 (rotational transforms 75/71 and 85/77)
 CLOSE_PX = 2.0              # a curve is closed to the eye when no two of its crossings next along it are further apart
@@ -388,18 +388,25 @@ def _on_surface(answer, axis, phi0):
 
 
 def _say_how_long(seeds, nper, src):
-    """A progress for Tracer.run: once the lines have been traced SAY_CHECK seconds, where those still going will take
-    more than SAY_AFTER seconds in all, how long, to the logger "torux" at INFO and through torux.ask.say (the command
-    line writes it to stderr), as a search of torux.solve says what it asks and how long it may take."""
-    t0, said = time.time(), []
+    """A progress for Tracer.run: once the lines have been followed SAY_PERIODS periods (a sixteenth of their length,
+    8 to 64), where lines are still going and they will take more than SAY_AFTER seconds in all, how long: the time so
+    far and the rest of the periods at the pace of the last piece, which only the lines still going cost.  To the
+    logger "torux" at INFO and through torux.ask.say (the command line writes it to stderr), as a search of
+    torux.solve says what it asks and how long it may take.  Lines that leave within the first periods (a field whose
+    lines do not stay) are gone by then, and nothing is said, however busy the machine."""
+    check = min(nper, max(8, min(64, nper // SAY_PERIODS)))
+    t0, last, said = time.time(), [time.time(), 0], []
 
     def progress(done, lost):
-        took = time.time() - t0
-        if said or took < SAY_CHECK:
+        now = time.time()
+        pace = (now - last[0]) / max(done - last[1], 1)
+        last[:] = [now, done]
+        if said or done < check or done >= nper:
             return
         said.append(True)
-        alive = float(np.mean(~np.asarray(lost, bool)))
-        est = took + took / done * (nper - done) * alive       # the lines that left cost nothing further
+        if np.all(lost):
+            return
+        est = (now - t0) + pace * (nper - done)
         if est > SAY_AFTER:
             from .ask import _say
             n = len(seeds)
@@ -794,19 +801,19 @@ def _follow(tr, o, sc, nper, phi0, period, px, src, per_period):
     the curve of their surface, are followed on, doubling their length up to FOLLOW_CAP times nper, until it settles
     and the curve closes.  A line followed on that leaves is one that left.  Returns the lines' data, now as long as
     the longest, NaN past each line's own length, and which lines lie on a surface whose curve is still open.
-    per_period: seconds a period of every line took, for the time said first."""
+    per_period: seconds a period of every line took, for whether to say first how far they may go."""
     L, P = o["R"].shape[:2]
     todo = [i for i in range(L) if _kind(o, i, period, px) in ("none", "open")]
     n = nper
     if todo:
         import numba
         threads = max(1, numba.get_num_threads())
-        est = per_period * math.ceil(len(todo) / threads) / math.ceil(L / threads) * (FOLLOW_CAP - 1) * nper
-        if est > SAY_AFTER:
+        est = per_period * math.ceil(len(todo) / threads) / math.ceil(L / threads) * nper
+        if est > SAY_AFTER:             # the first doubling alone would be long: how far it may go, not how long
             from .ask import _say
             _say(f"{getattr(src, 'id', None) or 'the source'}: following {len(todo)} of the lines on, up to "
                  f"{FOLLOW_CAP * nper} field periods, until their rotational transforms settle and their curves "
-                 f"close: up to about {_duration(est)} more")
+                 f"close")
     while todo and n < FOLLOW_CAP * nper:
         more = min(n, FOLLOW_CAP * nper - n)
         idx = np.array(todo)

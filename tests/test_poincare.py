@@ -210,11 +210,31 @@ def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
     import torux.poincare_section as P
     said = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
-    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", said.append)
     torux.poincare(quasr_954, starts=[(1.0, 0.0)], turns=20)
     assert "tracing 1 field line through 40 field periods, about" in said[0]
     assert all("following" in t for t in said[1:]) and len(said) <= 2
+
+
+def test_the_time_said_is_never_one_the_lines_will_not_take(monkeypatch):
+    """However slow the machine (here a thousand seconds a piece of the trace), nothing is said of lines that have all
+    left by a sixteenth of their length. Lines still going then are said to take the time so far and the rest of
+    the periods at the pace of the last piece: 4,000 s, and 560 periods at a thousand seconds for 30."""
+    import types
+    import torux.ask as A
+    import torux.poincare_section as P
+    said = []
+    monkeypatch.setattr(A, "say", said.append)
+    clock = iter(range(0, 10 ** 9, 1000))
+    monkeypatch.setattr(P, "time", types.SimpleNamespace(time=lambda: next(clock)))
+    progress = P._say_how_long(np.zeros((16, 2)), 600, torux.Source("gone", []))
+    for done in (2, 10, 40):
+        progress(done, np.array([True] * 16))
+    assert said == []
+    progress = P._say_how_long(np.zeros((16, 2)), 600, torux.Source("staying", []))
+    for done in (2, 10, 40):
+        progress(done, np.array([True] * 15 + [False]))
+    assert len(said) == 1 and "staying: tracing 16 field lines through 600 field periods, about 378 minutes" in said[0]
 
 
 EIGHT = [f"{1.0 + 0.01 * k:g},0" for k in range(8)]       # eight lines on surfaces of QUASR 954
@@ -227,7 +247,6 @@ def test_ctrl_c_stops_a_trace_within_seconds(quasr_954, ctrl_c, monkeypatch):
     import torux.poincare_section as P
     sent = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
-    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", lambda text: sent.append(ctrl_c(1.0)))
     with pytest.raises(KeyboardInterrupt):
         torux.poincare(quasr_954, starts=[tuple(map(float, s.split(","))) for s in EIGHT], turns=2500)
@@ -300,7 +319,6 @@ def test_a_source_whose_lines_do_not_go_round_says_so_before_any_tracing(monkeyp
     from torux.source import Rings, Source
     said = []
     monkeypatch.setattr(P, "SAY_AFTER", 0.0)
-    monkeypatch.setattr(P, "SAY_CHECK", 0.0)
     monkeypatch.setattr(A, "say", said.append)
     with pytest.raises(ValueError, match="no field line goes round the machine"):
         torux.poincare(example("d3d_icoils_upper.dat"))
