@@ -263,18 +263,19 @@ An answer with nothing of the plasma to draw (`undetermined`, `timeout`, `no_axi
 p = torux.poincare("examples/w7x.json")  # the field's own lines: torux chooses where they start, how many, how far
 print(p)
 p.plot("w7x.png")                        # .png, .pdf or .svg, and dark=True for a dark page
-p.R, p.Z                                 # (lines, planes, crossings) in m, NaN once a line has left
+p.R, p.Z                                 # (lines, planes, crossings) in m, NaN once a line has left or ended
 p.start, p.iota, p.profile               # where each line starts, its rotational transform, (distance from axis, iota)
-p.left, p.left_at                        # whether each line left the machine, and where: R, phi, Z
+p.left, p.left_at, p.followed           # whether each line left the machine, where (R, phi, Z), its length
 s.poincare().plot("q954.png")            # an answer's source, with the answer's surface drawn over the crossings
 ```
 
 ```
 Poincaré section       18 field lines of w7x through 3 planes at phi = 0°, 18°, 36°
-followed               120 turns (600 field periods) each, or until it left
-with an iota           16, from 0.858132 to 1.10389
+followed               120 turns (600 field periods) each, or until it left, 6 on to up to 2400 periods to close their
+                       curves
+with an iota           16, from 0.858132 to 1.1039
 left the machine       2
-time                   564.6 s
+time                   288.4 s
 ```
 
 <picture>
@@ -284,11 +285,11 @@ time                   564.6 s
 
 Each dot is a field line crossing a plane of constant toroidal angle, by default the start, a quarter and a half of a field period. A plane stands for every plane a whole number of periods from it, so a line crosses it once a period. Above, W7-X's surfaces nest round the magnetic axis and its five islands sit at the edge.
 
-Nothing needs setting. Lines start outboard of the magnetic axis: 16 evenly out to the last of 32 trial lines that stayed in the machine for 80 field periods, and 2 beyond it. For up to three island chains no line goes round yet (the fewest islands first, at most 12), Newton's method finds an elliptic point and two lines start round it. Each line is followed 600 field periods. It has left the machine where it turns back next to a coil, leaves the box round the conductors, or comes nearer a conductor than 0.3 of the axis' distance from it. `planes=` (radians), `lines=`, `turns=` and `starts=` override those choices, and nothing else does.
+Nothing needs setting. Lines start outboard of the magnetic axis: 16 evenly out to the last of 32 trial lines that stayed in the machine for 80 field periods, and 2 beyond it. For up to three island chains no line goes round yet (the fewest islands first, at most 12), Newton's method finds an elliptic point and two lines start round it. Each line is followed 600 field periods. A line on a surface whose crossings still leave a gap along its curve wider than 1 % of the plane (a ring of dashes, near a rational) is followed on, up to four times as far, until the curve closes: a curve means a surface, separate loops mean islands. A line has left the machine where it turns back next to a coil, leaves the box round the conductors, or comes nearer a conductor than 0.3 of the axis' distance from it. `planes=` (radians), `lines=`, `turns=` and `starts=` override those choices, and nothing else does.
 
 A line's rotational transform is its mean turn about the axis per toroidal turn, signed as torux signs iota: the weighted Birkhoff average of its turn each field period. A line has one where that average has settled, its first half within 1e-4 rad a period of the whole: on a surface, and in an island chain, whose rational it then is. A line that wanders has none, nor does one so near a resonance that 600 periods cannot settle it.
 
-The tracer works to rounding: Gragg-Bulirsch-Stoer of order 10, its steps chosen for each source so that a period's truncation error is rounding's, its increments added with Kahan's compensated sum. `s.poincare()` starts one more line on the answer's surface. On QUASR 954 that line stays within 7e-13 m of the verified surface in all three planes over 600 field periods, and its rotational transform matches the answer's to 1.6e-10, nine significant figures. Its crossings and two other lines' lie within 5e-15 m over ten turns of those of torux's independent reference tracer, which shares no code with it.
+The tracer is Gragg-Bulirsch-Stoer of order 10 or 12, the cheaper at its steps, which are chosen for each source so that a period's truncation error is that of rounding, with its increments added by Kahan's compensated sum. Its field is the engine's to 1e-14: a coil far from a line is summed on every 2nd to 16th of its nodes where that was measured, round the magnetic axis, to stay within 1e-15 of the field's strength (2e-15 measured where the lines go). `s.poincare()` starts one more line on the answer's surface. On QUASR 954 that line stays within 3.5e-12 m of the verified surface in all three planes over its 1,200 field periods, and its rotational transform matches the answer's to 1.1e-13, twelve significant figures. On HSX's verified surface at 0.0359 Wb they are 1.6e-12 m and 1.2e-9. Its crossings and two other lines' lie within 4e-14 m over ten turns of those of torux's independent reference tracer, which shares no code with it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../visuals/poincare-edge-dark.png">
@@ -297,7 +298,7 @@ The tracer works to rounding: Gragg-Bulirsch-Stoer of order 10, its steps chosen
 
 An answer's poincare draws its surface over the crossings, green where the independent check verified it, grey and dashed where not, and marks what a certificate holds: an island chain's elliptic points (circles), or the X line an edge certificate starts from (crosses) and the curve its manifolds make, which no surface crosses (grey). Above, `torux.solve("examples/quasr_1100073.json", budget_s=3300).poincare()`: the surfaces end inside the curve, and outside it lines wander and leave.
 
-On four threads of an Apple M4 shared with other work, QUASR's designs take seconds: 954 in 18 s, 797878 in 20 s, 1100073 in 17 s and 219457 in 31 s. HSX takes 8 minutes and W7-X 9: their 48 and 70 coils need 14,656 and 18,000 nodes for a field at rounding where lines pass them (954 needs 2,048), and the ripple of 12 and 14 coils a field period needs 96 and 80 steps a period (954: 40). From the shell, `torux poincare examples/w7x.json w7x.png` prints each line (where it starts, its rotational transform or when it left) and draws them, `--planes` in degrees.
+On four threads of an Apple M4 shared with other work (load 8 to 12), QUASR's designs take 15 to 25 s: 954 in 23 s, 797878 in 25 s, 1100073 in 15 s and 219457 in 25 s. HSX takes 3 minutes and W7-X 5: their 48 and 70 coils need 14,976 and 18,400 nodes for the field where lines pass near them, and the ripple of 12 and 14 coils a field period 48 to 64 steps a period (954: 24). Of W7-X's 5 minutes, 2.6 go to the 18 lines' 600 periods and 2 to following six of them on to close their curves. A call whose lines will take more than half a minute says first about how long, as a search of `torux.solve` says what it asks: on the command line on standard error, in Python to the logger `torux`. From the shell, `torux poincare examples/w7x.json w7x.png` prints each line (where it starts, its rotational transform or when it left) and draws them, `--planes` in degrees.
 
 ## Boozer spectrum and quasisymmetry
 
