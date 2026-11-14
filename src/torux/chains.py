@@ -12,7 +12,10 @@ dJ = 2 sqrt(eps / iota_J), and over the line's q field periods (phi = 2 pi q / n
 by q sqrt(iota_J eps) 2 pi q / nfp = 2 sqrt(R_O) (R_O = sin^2 of half that angle, small).  So
     dPhi_half = 2 nfp sqrt(R_O) / (pi q^2 |d iota / d Phi|)
 (the standard map of the q-period map in the angle q theta, twist 2 pi q^2 drho/dJ).  It assumes the
-shear constant across the chain and R_O small: an estimate, not a bound.
+shear constant across the chain and R_O small: an estimate, not a bound.  The shear analyse_chain gives it is
+the slope of iota over the family's last step before the chain (np.gradient at the end of the family): iota steepens
+as the tori near the chain, and where the family stops depends on its steps, which scale with the square root of
+the requested flux, so one chain's estimate differs between requests while its residue does not.
 """
 from __future__ import annotations
 
