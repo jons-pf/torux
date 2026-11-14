@@ -257,6 +257,48 @@ It takes minutes where `plot` takes seconds, and the first picture in a process 
 
 An answer with nothing of the plasma to draw (`undetermined`, `timeout`, `no_axis`, a torus that was not verified) is drawn as its coils alone. One that does not hold its coils raises ValueError, as `plot` does: an answer read back from its JSON, and one that ended before the field was built, which is an error or the verdict on a source that is not a stellarator (a tokamak's coils, perturbation coils, a dipole). `help(torux.render)` says what each mark is and what is decoration. From the shell: `torux render examples/quasr_0000954.json q954-closed.png --closed`.
 
+## Poincaré sections
+
+```python
+p = torux.poincare("examples/w7x.json")  # the field's own lines: torux chooses where they start, how many, how far
+print(p)
+p.plot("w7x.png")                        # .png, .pdf or .svg, and dark=True for a dark page
+p.R, p.Z                                 # (lines, planes, crossings) in m, NaN once a line has left
+p.start, p.iota, p.profile               # where each line starts, its rotational transform, (distance from axis, iota)
+p.left, p.left_at                        # whether each line left the machine, and where: R, phi, Z
+s.poincare().plot("q954.png")            # an answer's source, with the answer's surface drawn over the crossings
+```
+
+```
+Poincaré section       18 field lines of w7x through 3 planes at phi = 0°, 18°, 36°
+followed               120 turns (600 field periods) each, or until it left
+with an iota           16, from 0.858132 to 1.10389
+left the machine       2
+time                   564.6 s
+```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../visuals/poincare-w7x-dark.png">
+  <img src="../visuals/poincare-w7x-light.png" width="838" alt="The Poincaré section torux.poincare draws for W7-X's standard coils: in three panels, at 0, 18 and 36 degrees, the crossings of its field lines as small dots of ink. Closed curves nest round the magnetic axis, marked with a plus: a bean, a tilted bean and a triangle. At the edge five islands sit in each plane, each a set of small nested loops, and beyond them the dots scatter.">
+</picture>
+
+Each dot is a field line crossing a plane of constant toroidal angle, by default the start, a quarter and a half of a field period. A plane stands for every plane a whole number of periods from it, so a line crosses it once a period. Above, W7-X's surfaces nest round the magnetic axis and its five islands sit at the edge.
+
+Nothing needs setting. Lines start outboard of the magnetic axis: 16 evenly out to the last of 32 trial lines that stayed in the machine for 80 field periods, and 2 beyond it. For up to three island chains no line goes round yet (the fewest islands first, at most 12), Newton's method finds an elliptic point and two lines start round it. Each line is followed 600 field periods. It has left the machine where it turns back next to a coil, leaves the box round the conductors, or comes nearer a conductor than 0.3 of the axis' distance from it. `planes=` (radians), `lines=`, `turns=` and `starts=` override those choices, and nothing else does.
+
+A line's rotational transform is its mean turn about the axis per toroidal turn, signed as torux signs iota: the weighted Birkhoff average of its turn each field period. A line has one where that average has settled, its first half within 1e-4 rad a period of the whole: on a surface, and in an island chain, whose rational it then is. A line that wanders has none, nor does one so near a resonance that 600 periods cannot settle it.
+
+The tracer works to rounding: Gragg-Bulirsch-Stoer of order 10, its steps chosen for each source so that a period's truncation error is rounding's, its increments added with Kahan's compensated sum. `s.poincare()` starts one more line on the answer's surface. On QUASR 954 that line stays within 7e-13 m of the verified surface in all three planes over 600 field periods, and its rotational transform matches the answer's to 1.6e-10, nine significant figures. Its crossings and two other lines' lie within 5e-15 m over ten turns of those of torux's independent reference tracer, which shares no code with it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../visuals/poincare-edge-dark.png">
+  <img src="../visuals/poincare-edge-light.png" width="838" alt="The Poincaré section of the answer for examples/quasr_1100073.json, whose requested surface torux certified cannot exist. In three panels closed curves of dots nest round the axis. A grey curve runs round them through eleven crosses, the X line of period 11, and outside it the dots scatter, with a chain of eleven small islands beyond.">
+</picture>
+
+An answer's poincare draws its surface over the crossings, green where the independent check verified it, grey and dashed where not, and marks what a certificate holds: an island chain's elliptic points (circles), or the X line an edge certificate starts from (crosses) and the curve its manifolds make, which no surface crosses (grey). Above, `torux.solve("examples/quasr_1100073.json", budget_s=3300).poincare()`: the surfaces end inside the curve, and outside it lines wander and leave.
+
+On four threads of an Apple M4 shared with other work, QUASR's designs take seconds: 954 in 18 s, 797878 in 20 s, 1100073 in 17 s and 219457 in 31 s. HSX takes 8 minutes and W7-X 9: their 48 and 70 coils need 14,656 and 18,000 nodes for a field at rounding where lines pass them (954 needs 2,048), and the ripple of 12 and 14 coils a field period needs 96 and 80 steps a period (954: 40). From the shell, `torux poincare examples/w7x.json w7x.png` prints each line (where it starts, its rotational transform or when it left) and draws them, `--planes` in degrees.
+
 ## Boozer spectrum and quasisymmetry
 
 ```python
@@ -376,6 +418,8 @@ torux many SOURCE [SOURCE ...] --table FILE [--flux WB | --minor-radius M | --vo
             [--budget S] [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
 torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
              [--nfp N] [--kind stellarator|tokamak|dipole] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
+torux poincare SOURCE [FILE] [--planes DEG [DEG ...]] [--lines N] [--turns N] [--start R,Z] [--dark] [--nfp N]
+            [--coils NAME] [--currents saved|dofs]
 ```
 
 `--coils` and `--currents` are what `torux.load` takes as `which=` and `currents=` for a SIMSOPT JSON source: the coil set of a file holding several, by its `BiotSavart`'s name or index, and which of a `Current` object's two values to take where they differ ([formats](formats.md#simsopt-files-torux-refuses-rather-than-guess)). In `many` every SOURCE is a design of its own: given once, they apply to every design, and given once per SOURCE, in order, each applies to its own design, `-` for one that needs none. In `solve` and `check`, with several source files, `--coils` once is the first file's, and given once per file, in order, it is each file's, `-` for a file that needs none: `torux check a.json b.json surface.json --coils BiotSavart1 --coils BiotSavart2`, as `which=["BiotSavart1", "BiotSavart2"]` in Python. In `check`, `--which` is the surface's: `torux check file.json file.json --coils BiotSavart6 --which SurfaceXYZTensorFourier3`, and `--surface-currents` and `--mismatched-coils` are its `surface_currents=` and `mismatched_coils=True`.
