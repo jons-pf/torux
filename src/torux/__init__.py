@@ -11,6 +11,7 @@
     s.save("input.mine")                               # VMEC input. Also *.json, *.vtk
     s.plot("surface.png"), s.boozer()
     s.render("hero.png")                               # one picture in the README hero's look, path traced: minutes
+    s.render("closed.png", cut=False)                  # the same with the machine closed, no section opened
     torux.check("coils.json", "wout_mine.nc")          # how close another code's surface is to a flux surface
     torux.many(files, table="answers.csv")             # many designs at once, each in its own process
 

@@ -3,6 +3,7 @@
     s = torux.solve("examples/quasr_0000954.json")
     s.render("mine.png")                    # for a light page
     s.render("mine-dark.png", dark=True)    # for a dark page
+    s.render("closed.png", cut=False)       # the machine closed: no section opened
 
 Slow where answer.plot is fast: minutes of path tracing on a laptop's cores, and the first call compiles the tracer.
 One picture and nothing else: no axes, no scale, no words.  Everything drawn comes from the answer and its source:
@@ -27,11 +28,16 @@ One picture and nothing else: no axes, no scale, no words.  Everything drawn com
                                           certificate rules out any surface, each followed until it leaves the machine
                                           or nears a coil
     anything else                      -> the source alone: torux claims nothing about the plasma, so none is drawn
+    an answer that holds no source     -> ValueError, as answer.plot gives: one read from its JSON, and one that ended
+                                          before the field was built (an error, or the verdict torux.nonstell gives
+                                          on a source that is not a stellarator)
 
-Where there is a plasma, a wedge of it is cut away in front of one cross-section, and in that section the punctures
-of field lines through it show as points of light: the nested surfaces as rings, the island chain as its elliptic
-points (a wide one's islands as closed curves round them), the chaotic edge as a scatter.  Each point is a traced
-line's crossing of the plane or of a plane the source's field periods make the same, turned into it.
+Where there is a plasma, a wedge of it is cut away in front of one cross-section (cut=True, the default), and in that
+section the punctures of field lines through it show as points of light: the nested surfaces as rings, the island
+chain as its elliptic points (a wide one's islands as closed curves round them), the chaotic edge as a scatter.  Each
+point is a traced line's crossing of the plane or of a plane the source's field periods make the same, turned into
+it.  With cut=False the machine is drawn closed, from the same view and at the same size: every line drawn all the
+way round, the glow filling the whole plasma, no section opened and no points of light.
 
 Plasma is never drawn solid: only light and fibres.  The widths of coils, fibres, tubes and points are a drawing's,
 not data.  The machine is turned about its own axis to the view that frames it widest while opening a wide section.
@@ -53,7 +59,7 @@ SPP = 192                  # samples per pixel where anything stands (fewer on t
 ELEVATION = 40.0           # degrees: the camera looks down on the machine at this angle
 FIT = (4.6, 3.5)           # the machine is scaled to this width (or height) in the drawing's units
 MARGIN = (0.05, 0.06)      # the picture's margin round the machine, of its width and height
-CUT = 40.0                 # degrees of the plasma cut away in front of the cross-section the picture opens (0: none)
+CUT = 40.0                 # degrees of the plasma cut away in front of the cross-section a cut picture opens
 ISLAND_PX = 6.0            # an island chain this many pixels wide at README size or more is drawn at its true width
 WIDE = 2.0 / 3.0           # the section it opens is at least this share of the plasma's widest
 SECTION = dict(rings=(2, 6), px_per_ring=14, periods=160)   # the lines whose punctures show in it: two to six,
@@ -147,27 +153,29 @@ PALETTES = {
 
 
 # ============================================================================ the call
-def render(answer, path, *, dark=False):
-    """The picture of ``answer`` (module docstring) as a PNG file at ``path``, for a dark page with ``dark=True``.
-    Returns the path.  An answer is traced once: its other page's picture then takes no time."""
+def render(answer, path, *, dark=False, cut=True):
+    """The picture of ``answer`` (module docstring) as a PNG file at ``path``, for a dark page with ``dark=True``,
+    with a wedge of the plasma cut away in front of one cross-section, or with ``cut=False`` the machine closed.
+    Returns the path.  An answer is traced once for each of cut and closed: the other page's picture then takes no
+    time, and the second of cut and closed takes the tracing alone."""
     name = os.fspath(path)
     if os.path.splitext(name)[1].lower() != ".png":
         raise ValueError(f"cannot render to {name!r}: name a .png file")
-    images = picture(answer)
+    images = picture(answer, cut=cut)
     PT.write_png(name, images[bool(dark)])
     return path
 
 
-def picture(answer, width=README_WIDTH, spp=SPP, log=None):
-    """Both pages' pictures of an answer, {False: light page, True: dark page}, each uint8 (H, W, 3), kept on the
-    answer for the next call."""
+def picture(answer, width=README_WIDTH, spp=SPP, log=None, cut=True):
+    """Both pages' pictures of an answer, {False: light page, True: dark page}, each uint8 (H, W, 3), cut or closed,
+    kept on the answer for the next call."""
     cache = answer.__dict__.setdefault("_render", {})
-    key = (int(width), int(spp))
+    key = (int(width), int(spp), bool(cut))
     if key not in cache:
         drawn = answer.__dict__.get("_render_drawn")
         if drawn is None:
             drawn = answer.__dict__["_render_drawn"] = content(answer, log=log)
-        scene, pool = build(drawn, width)
+        scene, pool = build(drawn, width, cut=cut)
         cache[key] = trace_pages(scene, pool, spp, log=log)
     return cache[key]
 
@@ -217,8 +225,6 @@ def content(answer, log=None):
         _edge(answer, src, cert, out, log)
     else:
         out["about"].append(f"no plasma: the answer is {st!r}, which holds no surface or certificate to draw")
-    if CUT <= 0:
-        out["dots"] = []                         # the cut is off: the plasma closed, no section opened
     if out["dots"]:
         n = sum(len(d[0]) for d in out["dots"])
         out["about"].append(f"the plasma cut away over {CUT:g} degrees in front of its cross-section at phi = "
@@ -683,20 +689,17 @@ def _surface(answer, src, out, log):
     kept = _inner_lines(tr, ax, edge, phi0, n_out, per_turn, rng, out)
     # the cut: the surface's own punctures (a field line's angle advances by iota 2 pi / nfp a period, and the torus
     # is the same in every period) and the nested surfaces' from lines of their own
-    rings = 0
-    if CUT > 0:
-        m = np.arange(SECTION["periods"])
-        xc = _torus_points(T, iota * 2 * math.pi / nfp * m, np.full(len(m), out["cut"][0]))
-        out["dots"].append((np.column_stack([np.hypot(xc[:, 0], xc[:, 1]), xc[:, 2]]), "points", 1.0))
-        rings = _section_lines(tr, ax, edge, phi0, out["cut"][0], out)
+    m = np.arange(SECTION["periods"])
+    xc = _torus_points(T, iota * 2 * math.pi / nfp * m, np.full(len(m), out["cut"][0]))
+    out["dots"].append((np.column_stack([np.hypot(xc[:, 0], xc[:, 1]), xc[:, 2]]), "points", 1.0))
+    rings = _section_lines(tr, ax, edge, phi0, out["cut"][0], out)
     out["about"] += [f"the verified surface at {abs(float(T.flux)):.6g} Wb (iota {iota:.6g}) as {n_out} of its field "
                      f"lines, {Ls['outer_transits']} turns each, from its own coefficients",
                      f"{kept} lines traced in the source's field from between {where} and the surface's outboard "
                      f"point: the nested surfaces",
+                     f"in the cut, the surface's own punctures from its coefficients and {rings} more lines' "
+                     f"punctures",
                      "a glow filling the verified surface"]
-    if CUT > 0:
-        out["about"].append(f"in the cut, the surface's own punctures from its coefficients and {rings} more lines' "
-                            f"punctures")
 
 
 # ---------------------------------------------------------------------------- an island chain
@@ -887,13 +890,12 @@ def _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_o
         kept_inner = _inner_lines(tr, a, seeds[last], phi_s, n_out, per_turn, rng, out)
         out["fibres"][first:] = [None if f is None else (f[0], f[1], f[2] * ISLANDS["core"], f[3])
                                  for f in out["fibres"][first:]]
-        if CUT > 0:
-            pick = sorted(set(np.round(np.linspace(0, len(surf) - 1, min(_ring_count(out), len(surf)))).astype(int)))
-            for j in pick:
-                c = _crossings(tr, lines[surf[j]][0][:Ks], lines[surf[j]][1][:Ks], out["cut"][0])
-                if len(c):
-                    out["dots"].append((c, "points", 1.0))
-                    rings_drawn += 1
+        pick = sorted(set(np.round(np.linspace(0, len(surf) - 1, min(_ring_count(out), len(surf)))).astype(int)))
+        for j in pick:
+            c = _crossings(tr, lines[surf[j]][0][:Ks], lines[surf[j]][1][:Ks], out["cut"][0])
+            if len(c):
+                out["dots"].append((c, "points", 1.0))
+                rings_drawn += 1
     # the islands: the ray's lines locked to the chain's rotation, from its separatrix in to the elliptic point (whose
     # own line, the ray's last, is the elliptic line drawn below)
     T = q * nfp // gcd(q, nfp)              # field periods for a line to come back to its island in the same plane
@@ -922,21 +924,18 @@ def _wide_islands(cert, out, log, tr, O, a, phi_s, o_pieces, o_loops, o_gap, n_o
             for r in range(g):
                 out["fibres"].append(_fibre(d @ _rot(360.0 * r / nfp).T, per_turn, rng, b, channel="islands"))
             strands += 1
-        if CUT > 0:
-            c = _crossings(tr, st, ph, out["cut"][0])
-            if len(c):
-                cut_pts.append(c)
+        c = _crossings(tr, st, ph, out["cut"][0])
+        if len(c):
+            cut_pts.append(c)
     # the elliptic lines at the islands' centres, closed
     for chain in o_loops:
         seg = [tr.dense(*o_pieces[k][:2], per_turn) for k in chain]
         loop = np.concatenate([s_[:-1] for s_ in seg])
         out["fibres"].append(_loop(loop, 1.0, "islands"))
-    beads = []
-    if CUT > 0:
-        beads = [c[0] for c in (_crossings(tr, st, ph, out["cut"][0]) for st, ph, _ in o_pieces) if len(c)]
-        out["dots"].append((np.array(beads).reshape(-1, 2), "beads", 1.0))
-        if cut_pts:
-            out["dots"].append((np.concatenate(cut_pts), "islands", 1.0))
+    beads = [c[0] for c in (_crossings(tr, st, ph, out["cut"][0]) for st, ph, _ in o_pieces) if len(c)]
+    out["dots"].append((np.array(beads).reshape(-1, 2), "beads", 1.0))
+    if cut_pts:
+        out["dots"].append((np.concatenate(cut_pts), "islands", 1.0))
     count = {k: sum(1 for kind, _ in kinds if kind == k) for k in ("surface", "island", "chaos", "other", "lost")}
     out["about"] += [f"the island chain at iota = {_frac(p * nfp, q)} ({q} islands in each cross-section, "
                      f"{width:.0f} pixels wide at README size) at its true width, from {ISLANDS['ray']} lines traced "
@@ -1206,10 +1205,10 @@ def _sections_of_line(tr, states, rho, phi_s, nth=96):
 
 
 # ============================================================================ the scene
-def build(drawn, width):
+def build(drawn, width, cut=True):
     """The tracer's scene of what is drawn: turned about the machine's axis, scaled to the drawing's units,
-    standing on the floor, framed so that the machine fills the picture.  Returns the scene and the dark page's pool
-    of light."""
+    standing on the floor, framed so that the machine fills the picture, the plasma cut open or with ``cut=False``
+    closed.  Returns the scene and the dark page's pool of light."""
     sol = drawn["solids"]
     pts = _solid_points(sol)
     fib = [f for f in drawn["fibres"] if f is not None]
@@ -1265,7 +1264,7 @@ def build(drawn, width):
     else:
         tris = (np.zeros((0, 3, 3)), np.zeros((0, 3, 3)), np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 2)))
     # the cut: no light in the wedge in front of the opened cross-section, and in that section its points
-    cut = drawn.get("cut") if drawn.get("dots") else None
+    cut = drawn.get("cut") if cut and drawn.get("dots") else None
     if fib:
         FA = np.concatenate([f[0] for f in fib])
         FB = np.concatenate([f[1] for f in fib])

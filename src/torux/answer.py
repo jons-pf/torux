@@ -313,13 +313,17 @@ class Answer(Result):
         from .plot import plot
         return plot(self, path, dark=dark)
 
-    def render(self, path, *, dark=False):
+    def render(self, path, *, dark=False, cut=True):
         """The answer as one picture in the look of torux's README hero, path traced: minutes where plot takes
         seconds.  The coils in copper and, in light, the surface woven from its field lines, or where there is no
         surface the certificate: the island chain, or the field lines leaving beyond the last surface.  ``path`` a
-        .png file, whose path is returned.  ``dark=True`` for a dark page.  torux.render says what each mark is."""
+        .png file, whose path is returned.  ``dark=True`` for a dark page.  By default a wedge of the plasma is cut
+        away in front of one cross-section, where the punctures of field lines show as points of light.
+        ``cut=False`` draws the machine closed.  An answer with nothing of the plasma to draw (undetermined, a
+        timeout, a surface not verified) draws its coils alone, and one that does not hold its source (read from a
+        file, or a proof) raises ValueError.  torux.render says what each mark is."""
         from .render import render
-        return render(self, path, dark=dark)
+        return render(self, path, dark=dark, cut=cut)
 
     def boozer(self):
         """|B| on the surface in Boozer angles: its harmonics in tesla and its quasi-symmetry (a
