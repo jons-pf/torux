@@ -7,13 +7,16 @@
                 [--currents saved|dofs] [--surface-currents saved|dofs] [--mismatched-coils]
     torux many SOURCE [SOURCE ...] --table FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
                [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
+    torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
+                 [--nfp N] [--kind K] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
     torux version
 
 solve prints the answer on stdout and, with --save, writes it: *.json (everything), input.<name> (VMEC input, cut
 to --mpol and --ntor when they are given), *.vtk (the surface with |B|). --save may be given more than once.  A
 search (a size, the largest) says on stderr what it asks, how long it may take and each request as it ends.  The exit
 code is 0 for a verified surface, a certified or proved no-surface or a verified range, 2 for anything undetermined,
-1 for an error, a command line that cannot be read included.  Each subcommand is a pair of functions in COMMANDS.
+1 for an error, a command line that cannot be read included.  render solves as solve does, prints the answer, and
+writes its picture (answer.render), with the same exit code, or 1 where no picture could be written.  Each subcommand is a pair of functions in COMMANDS.
 --coils and --currents are torux.load's which= and currents= for a SIMSOPT JSON source: which coil set of a file
 holding several (with several files, --coils once per file, - for one that needs none), and which of a Current
 object's two values where they differ.  In many, given once they apply to every design, and given once per SOURCE,
@@ -83,16 +86,7 @@ def _solve_args(sub):
                                    "surface when it carries none.")
     s.add_argument("files", nargs="+", metavar="SOURCE",
                    help="a coil or magnet file, or quasr:NUMBER. Several files whose parts add up are one source")
-    ask = s.add_mutually_exclusive_group()
-    ask.add_argument("--flux", type=float, metavar="WB", help="the surface enclosing this full toroidal flux, in Wb")
-    ask.add_argument("--minor-radius", type=float, metavar="M", help="the surface of this minor radius, in m")
-    ask.add_argument("--volume", type=float, metavar="M3", help="the surface enclosing this volume, in m^3")
-    ask.add_argument("--largest", action="store_true", help="the largest surface torux can verify for the source")
-    s.add_argument("--budget", type=float, metavar="S", help="seconds for the whole question (default: stated from "
-                                                             "the source's size)")
-    s.add_argument("--nfp", type=int, metavar="N", help="field periods, where the format does not state them")
-    s.add_argument("--kind", choices=("stellarator", "tokamak", "dipole"), help="what the source is (default: "
-                                                                                "stellarator)")
+    _question_args(s)
     s.add_argument("--gradients", action="store_true", help="also the gradients of iota in every source parameter")
     s.add_argument("--no-verify", action="store_true", help="skip the independent verification: the answer then rests "
                                                             "on the solver's own checks")
@@ -116,14 +110,55 @@ def _say(text):
     print(f"torux: {text}", file=sys.stderr, flush=True)
 
 
+def _question_args(s):
+    """The question, as solve asks it: the flux surface by one of four, the budget, and how to read the source."""
+    ask = s.add_mutually_exclusive_group()
+    ask.add_argument("--flux", type=float, metavar="WB", help="the surface enclosing this full toroidal flux, in Wb")
+    ask.add_argument("--minor-radius", type=float, metavar="M", help="the surface of this minor radius, in m")
+    ask.add_argument("--volume", type=float, metavar="M3", help="the surface enclosing this volume, in m^3")
+    ask.add_argument("--largest", action="store_true", help="the largest surface torux can verify for the source")
+    s.add_argument("--budget", type=float, metavar="S", help="seconds for the whole question (default: stated from "
+                                                             "the source's size)")
+    s.add_argument("--nfp", type=int, metavar="N", help="field periods, where the format does not state them")
+    s.add_argument("--kind", choices=("stellarator", "tokamak", "dipole"), help="what the source is (default: "
+                                                                                "stellarator)")
+
+
+def _ask(a, **options):
+    """The answer to the question on the command line, saying on stderr what it asks and how long it may take."""
+    import torux
+    from . import ask
+    ask.one_question(a.flux, a.minor_radius, a.volume, a.largest)
+    if a.budget is not None and not (a.budget > 0 and a.budget < float("inf")):
+        raise ValueError(f"--budget {a.budget:g}: give the seconds for the whole question as a positive number")
+    from .check import source_choices
+    src = torux.load(*a.files, nfp=a.nfp, kind=a.kind, **source_choices(a))
+    own = a.flux if a.flux is not None else (src.request or {}).get("flux_Wb")
+    if own is not None and a.minor_radius is None and a.volume is None and not a.largest:
+        from .api import estimate_budget          # one request. A search says what it asks itself
+        given = a.budget is not None
+        b = a.budget if given else estimate_budget(src, own)
+        _say(f"solving {src.id} at {abs(float(own)):.9g} Wb" + (" (its own request)" if a.flux is None else "")
+             + f": up to {b:.0f} s, " + ("the budget given" if given else "a budget stated from the source's "
+                                                                          "size since none was given"))
+    ask.say = _say
+    try:
+        return torux.solve(src, a.flux, minor_radius=a.minor_radius, volume=a.volume, largest=a.largest,
+                           budget_s=a.budget, **options)
+    finally:
+        ask.say = None
+
+
+def _code(res):
+    return 0 if res.status in ("surface", "no_surface", "range") else 1 if res.status == "error" else 2
+
+
 def _solve(a):
     import json
     import warnings
-    import torux
     # numpy's notes on the solver's own arithmetic (a NaN it goes on to discard) are not the user's to read: stderr
     # carries what is asked and each request's outcome
     warnings.filterwarnings("ignore", category=RuntimeWarning, module=r"torux(\.|$)")
-    from . import ask
     from .answer import save_format
     try:
         cut = a.mpol is not None or a.ntor is not None
@@ -134,31 +169,12 @@ def _solve(a):
         if a.plot:
             from .plot import check_path
             check_path(a.plot)
-        ask.one_question(a.flux, a.minor_radius, a.volume, a.largest)
-        if a.budget is not None and not (a.budget > 0 and a.budget < float("inf")):
-            raise ValueError(f"--budget {a.budget:g}: give the seconds for the whole question as a positive number")
-        from .check import source_choices
-        src = torux.load(*a.files, nfp=a.nfp, kind=a.kind, **source_choices(a))
-        own = a.flux if a.flux is not None else (src.request or {}).get("flux_Wb")
-        if own is not None and a.minor_radius is None and a.volume is None and not a.largest:
-            from .api import estimate_budget          # one request. A search says what it asks itself
-            given = a.budget is not None
-            b = a.budget if given else estimate_budget(src, own)
-            _say(f"solving {src.id} at {abs(float(own)):.9g} Wb" + (" (its own request)" if a.flux is None else "")
-                 + f": up to {b:.0f} s, " + ("the budget given" if given else "a budget stated from the source's "
-                                                                              "size since none was given"))
-        ask.say = _say
-        try:
-            res = torux.solve(src, a.flux, minor_radius=a.minor_radius, volume=a.volume, largest=a.largest,
-                              budget_s=a.budget, verify=not a.no_verify, trace_lines=a.trace_lines,
-                              gradients=a.gradients)
-        finally:
-            ask.say = None
+        res = _ask(a, verify=not a.no_verify, trace_lines=a.trace_lines, gradients=a.gradients)
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1
     print(res)
-    code = 0 if res.status in ("surface", "no_surface", "range") else 1 if res.status == "error" else 2
+    code = _code(res)
     if a.boozer:
         try:
             print("\n" + str(res.boozer()))
@@ -196,6 +212,47 @@ def _solve(a):
     return code
 
 
+def _render_args(sub):
+    r = sub.add_parser("render", help="the answer as one path-traced picture in the look of the README: minutes",
+                       description="Solves the source as solve does, prints the answer, and draws it to FILE as "
+                                   "answer.render does: its coils in copper and the surface, or the certificate that "
+                                   "there is none, in light, a wedge of the plasma cut away in front of one "
+                                   "cross-section. Minutes of path tracing. An answer with nothing of the plasma to "
+                                   "draw is drawn as its coils alone.")
+    r.add_argument("files", nargs="+", metavar="SOURCE",
+                   help="a coil or magnet file, or quasr:NUMBER. Several files whose parts add up are one source")
+    r.add_argument("file", metavar="FILE", help="the picture to write: a .png file")
+    _question_args(r)
+    r.add_argument("--dark", action="store_true", help="for a dark page")
+    r.add_argument("--closed", action="store_true", help="the machine closed, with no cross-section opened")
+    from .check import add_source_choices
+    add_source_choices(r)
+
+
+def _render(a):
+    import os
+    import warnings
+    warnings.filterwarnings("ignore", category=RuntimeWarning, module=r"torux(\.|$)")
+    try:
+        if os.path.splitext(a.file)[1].lower() != ".png":
+            raise ValueError(f"cannot render to {a.file!r}: name a .png file")
+        res = _ask(a)
+    except Exception as e:  # noqa: BLE001
+        print(f"error   {e}", file=sys.stderr)
+        return 1
+    print(res)
+    _say(f"rendering {a.file}: minutes of path tracing")
+    try:
+        res.render(a.file, dark=a.dark, cut=not a.closed)
+    except ValueError as e:             # an answer that does not hold its source: nothing written
+        print(f"not drawn   {a.file}: {e}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"error   {e}", file=sys.stderr)
+        return 1
+    return _code(res)
+
+
 def _check_args(sub):
     from .check import add_command
     add_command(sub)
@@ -228,7 +285,7 @@ def _version(a):
 
 # subcommand: (add its parser to the subparsers, run it on the parsed arguments and return the exit code)
 COMMANDS = {"solve": (_solve_args, _solve), "check": (_check_args, _check), "many": (_many_args, _many),
-            "version": (_version_args, _version)}
+            "render": (_render_args, _render), "version": (_version_args, _version)}
 
 
 class _Parser(argparse.ArgumentParser):
