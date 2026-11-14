@@ -1,7 +1,8 @@
 """answer.render: one picture in the look of the README hero, path traced.  What it draws is the answer's: every fibre
 of light runs along the source's field, the woven surface lies on the verified torus, the island chain's tubes pass
 through the certificate's own points, the haze is lines traced until they leave.  Outside the machine's shadow the
-picture is exactly the page's colour, and nothing in it is red.  The full pictures take minutes each: -m slow."""
+picture is exactly the page's colour, and nothing in it is red.  Closed, it is the same machine with no wedge cut
+away and no section opened.  The full pictures take minutes each: -m slow."""
 import copy
 import math
 
@@ -134,6 +135,20 @@ def test_the_cut_shows_the_surface_and_the_nested_ones_where_they_are(solved_954
     assert not np.any(lit)
 
 
+def test_closed_the_plasma_is_whole_and_no_section_is_opened(drawn_954):
+    """cut=False: every fibre drawn, in the wedge too, and no points of light. The machine is turned and framed as in
+    the cut picture."""
+    cut, closed = RD.build(drawn_954, 200)[0], RD.build(drawn_954, 200, cut=False)[0]
+    n = sum(len(f[0]) for f in drawn_954["fibres"] if f is not None)
+    assert len(closed.glow[0]) == n and len(cut.glow[0]) != n
+    assert not np.any(np.isin(closed.glow[3], [RD.CHANNELS[c]["index"] for c in ("points", "beads")]))
+    s, off, Rt = closed.place
+    mid = (0.5 * (closed.glow[0] + closed.glow[1]).astype(float) - off) / s @ Rt
+    assert np.any(RD._in_wedge(mid, drawn_954["cut"]))
+    assert closed.place[0] == cut.place[0] and np.array_equal(closed.place[2], cut.place[2])
+    assert (closed.W, closed.H) == (cut.W, cut.H)
+
+
 def test_the_coils_are_drawn_on_their_filaments(quasr_954, drawn_954):
     paths = drawn_954["solids"]["paths"]
     part = quasr_954.parts[0]
@@ -166,15 +181,45 @@ def test_a_small_picture_is_the_page_outside_the_machine_and_never_red(solved_95
     (Light that bounced from coil to coil several times is copper on copper, a deep rust: with a few dozen samples a
     pixel can be mostly that, and read as red.)"""
     a = copy.copy(solved_954)
-    a.__dict__.pop("_render", None)
-    pics = RD.picture(a, width=160, spp=RD.SPP)
-    for dark in (False, True):
-        img = pics[dark]
-        assert img.shape[1] == 160 and img.dtype == np.uint8
-        assert _check_page(img, dark) > 20
-        p = tmp_path / f"p{int(dark)}.png"
-        PT.write_png(p, img)
-        assert np.array_equal(PT.read_png(p), img)
+    a.__dict__["_render"] = {}
+    pics = {cut: RD.picture(a, width=160, spp=RD.SPP, cut=cut) for cut in (True, False)}
+    for cut in (True, False):
+        for dark in (False, True):
+            img = pics[cut][dark]
+            assert img.shape[1] == 160 and img.dtype == np.uint8
+            assert _check_page(img, dark) > 20
+            p = tmp_path / f"p{int(cut)}{int(dark)}.png"
+            PT.write_png(p, img)
+            assert np.array_equal(PT.read_png(p), img)
+        assert not np.array_equal(pics[cut][False], pics[not cut][False])
+
+
+def test_torux_render_solves_prints_and_draws(monkeypatch, tmp_path, capsys):
+    """From the shell: the question solve takes, the answer printed, the picture written as answer.render writes it
+    (here small), --dark and --closed its options. A name that is not .png is refused before any solve, and an
+    answer with no source to draw is not drawn: code 1 either way."""
+    from torux.cli import main
+    whole = RD.picture
+    asked = []
+
+    def small(answer, cut=True, **kw):
+        asked.append(cut)
+        return whole(answer, width=120, spp=RD.SPP, cut=cut)
+    monkeypatch.setattr(RD, "picture", small)
+    f = tmp_path / "q.png"
+    assert main(["render", example("quasr_0000954.json"), str(f), "--flux", "0.05", "--dark", "--closed"]) == 0
+    out, err = capsys.readouterr()
+    assert "surface" in out and "0.05" in out and "rendering" in err
+    img = PT.read_png(f)
+    assert asked == [False] and img.shape[1] == 120 and np.all(img[0] == PAGES[True])
+    assert main(["render", example("quasr_0000954.json"), str(tmp_path / "q.jpg")]) == 1
+    assert ".png" in capsys.readouterr().err and asked == [False]
+
+    def no_source(self, path, **kw):
+        raise ValueError("this answer does not hold its source")
+    monkeypatch.setattr(torux.Answer, "render", no_source)
+    assert main(["render", example("quasr_0000954.json"), str(tmp_path / "n.png")]) == 1
+    assert "not drawn" in capsys.readouterr().err and not (tmp_path / "n.png").exists()
 
 
 def test_a_wide_chains_lines_are_told_apart_by_their_rotation():
