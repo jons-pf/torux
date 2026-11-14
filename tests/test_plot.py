@@ -19,7 +19,7 @@ from conftest import example
 
 HAVE_MPL = importlib.util.find_spec("matplotlib") is not None
 HAVE_SIMSOPT = importlib.util.find_spec("simsopt") is not None
-needs_mpl = pytest.mark.skipif(not HAVE_MPL, reason='drawing needs matplotlib: pip install ".[plot]"')
+needs_mpl = pytest.mark.skipif(not HAVE_MPL, reason='drawing needs matplotlib: pip install "torux[plot]"')
 needs_simsopt = pytest.mark.skipif(not (HAVE_MPL and HAVE_SIMSOPT), reason="needs matplotlib and SIMSOPT 1.11.1")
 if HAVE_MPL:
     import matplotlib
@@ -418,7 +418,7 @@ def test_a_picture_is_png_pdf_or_svg(solved_954, tmp_path):
 def test_without_matplotlib_one_sentence_names_the_install(monkeypatch):
     import torux.plot as P
     monkeypatch.setitem(sys.modules, "matplotlib", None)
-    with pytest.raises(ImportError, match=r'pip install "\.\[plot\]"'):
+    with pytest.raises(ImportError, match=r'pip install "torux\[plot\]"'):
         P.plot(types.SimpleNamespace(surface=object(), status="surface"))
 
 

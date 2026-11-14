@@ -12,7 +12,7 @@ matplotlib sorts whole artists by depth, not their parts, so the depth is resolv
 painted far to near, and every short piece of coil is set behind the surface or in front of it by the depth of the
 painted surface at every pixel its stroke can reach, so that no coil behind the surface is drawn over it.  Everything
 drawn comes from the answer: the surface's own Fourier series, the field of its source, the magnetic axis its
-evidence holds.  Needs matplotlib (pip install ".[plot]" in the torux folder).
+evidence holds.  Needs matplotlib: pip install "torux[plot]".
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def check_path(path):
     try:
         import matplotlib  # noqa: F401
     except ImportError as e:
-        raise ImportError('drawing needs matplotlib: pip install ".[plot]" in the torux folder') from e
+        raise ImportError('drawing needs matplotlib: pip install "torux[plot]"') from e
     return ext
 
 
