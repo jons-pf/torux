@@ -19,6 +19,19 @@ def test_status_and_both_checks(solved_954):
     assert abs(abs(res.surface.flux) / QUASR_954["flux_Wb"] - 1) < 1e-12
 
 
+def test_the_resonance_guard_says_which_harmonics_it_computed(solved_954):
+    """The guard computes h only for the harmonics m <= m_max = 2 M + 10 whose divisor |m iota - n nfp| is under
+    d_max = sqrt(2 bn / PREFILTER). The record says both, and n_checked is the number of those harmonics (none, on a
+    surface at the rounding floor away from every low-order rational, every other one passing by the bound
+    eps <= 2 bn scale)."""
+    from torux import guard
+    g, T = solved_954.evidence["solver"]["guard"], solved_954.surface
+    bn = solved_954.evidence["solver"]["bn_off"]
+    assert g["ok"] and g["m_max"] == 2 * T.M + 10
+    assert abs(g["d_max"] - np.sqrt(2 * bn / guard.PREFILTER)) <= 1e-15 * g["d_max"]
+    assert g["n_checked"] == len(guard.near_resonances(T.iota, T.nfp, g["m_max"], g["d_max"]))
+
+
 def test_rotational_transform_matches_the_table(solved_954):
     assert abs(abs(solved_954.iota) - abs(QUASR_954["iota"])) < 1e-11
 

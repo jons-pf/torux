@@ -931,7 +931,7 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             shear_phi = (io[hi] - io[lo]) / (fl[hi] - fl[lo]) if hi > lo else np.nan
             g = resonance_guard(rc_.engine, best, shear=shear_phi * 2 * np.pi)
             out["guard"] = dict(ok=g["ok"], h=g["h"], x_over_w=g["x_over_w"], worst=g["worst"],
-                                n_checked=len(g["checked"]))
+                                n_checked=len(g["checked"]), m_max=g.get("m_max"), d_max=g.get("d_max"))
             out["surface"] = torus_record(best, full=True)
             out["surface"]["quad_err_half"] = q_
             out["refine_hist"] = best.info.get("refine_hist")
@@ -2305,7 +2305,8 @@ def analyse_design(source, surfaces, flux=None, iota_hints=None, dmin=None, tol=
         else:
             shear_phi = (best.iota - ax.iota) / best.flux
         g = resonance_guard(rc_.engine, best, shear=shear_phi * 2 * np.pi)
-        out["guard"] = dict(ok=g["ok"], h=g["h"], x_over_w=g["x_over_w"], worst=g["worst"], n_checked=len(g["checked"]))
+        out["guard"] = dict(ok=g["ok"], h=g["h"], x_over_w=g["x_over_w"], worst=g["worst"], n_checked=len(g["checked"]),
+                            m_max=g.get("m_max"), d_max=g.get("d_max"))
         out["surface"] = torus_record(best, full=True)
         out["surface"]["quad_err_half"] = q_
         out["refine_hist"] = best.info.get("refine_hist")

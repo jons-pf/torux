@@ -385,7 +385,8 @@ def _accept(cont, source, sol, tori, dmin, tol, deadline, verbose, lean, out, t0
     g = resonance_guard(rc_.engine, best, shear=shear_phi * 2 * np.pi)
     rec = torus_record(best, full=True)
     rec["quad_err_half"] = rc_.problem(best.M, best.N).quadrature_check(best)
-    guard = dict(ok=g["ok"], h=g["h"], x_over_w=g["x_over_w"], worst=g["worst"], n_checked=len(g["checked"]))
+    guard = dict(ok=g["ok"], h=g["h"], x_over_w=g["x_over_w"], worst=g["worst"], n_checked=len(g["checked"]),
+                 m_max=g.get("m_max"), d_max=g.get("d_max"))
     from .analysis import BN_SURFACE
     ok = bool(best.bn_off <= BN_SURFACE and g["ok"] and rec["quad_err_half"] <= 1e-8)
     return best, rec, guard, ok

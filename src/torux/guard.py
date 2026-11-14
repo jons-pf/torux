@@ -57,14 +57,18 @@ def near_resonances(iota, nfp, mmax, thr):
 
 
 def resonance_guard(engine, torus, shear, mmax=None, bn=None, symmetric=True):
-    """dict(ok, h, x_over_w, worst=(m, n, d, eps), checked=[...]).  shear = d iota / d Phi' (1/Wb)."""
+    """dict(ok, h, x_over_w, worst=(m, n, d, eps), checked=[...], m_max, d_max).  shear = d iota / d Phi' (1/Wb).
+    checked: the harmonics m <= m_max whose divisor d is under d_max, the only ones whose h the bound eps <= ~2 bn
+    scale leaves able to pass PREFILTER: an empty list means that no harmonic was near enough resonance to compute,
+    every other one passing by that bound."""
     mmax = mmax or 2 * torus.M + 10
     bn = torus.bn_off if bn is None else bn
-    out = dict(ok=True, h=0.0, x_over_w=np.inf, worst=None, checked=[], shear=shear)
+    out = dict(ok=True, h=0.0, x_over_w=np.inf, worst=None, checked=[], shear=shear, m_max=int(mmax))
     if not np.isfinite(bn):
         return dict(out, ok=False, h=np.inf, reason="bn not finite")
     # a harmonic matters only if eps / scale / d^2 can exceed PREFILTER; eps <= ~2 bn scale
     thr = np.sqrt(2.0 * max(bn, 1e-300) / PREFILTER)
+    out["d_max"] = float(thr)        # the harmonics computed: m <= m_max with 0 < d < d_max ('checked')
     harm = near_resonances(torus.iota, torus.nfp, mmax, thr)
     if not harm:
         return out

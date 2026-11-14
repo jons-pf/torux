@@ -1306,7 +1306,8 @@ def accept(engine, source, axis, best: TorusState, request, shear_flux, refine_e
     rec["bn_ok"] = bool(np.isfinite(best.bn_off) and best.bn_off <= BN_SURFACE)
     g = resonance_guard(eng, best, shear=shear_flux * 2 * np.pi if np.isfinite(shear_flux) else np.nan)
     rec["guard"] = dict(ok=bool(g["ok"]), h=float(g["h"]), x_over_w=float(g["x_over_w"]), worst=g["worst"],
-                        n_checked=len(g["checked"]), shear_flux=float(shear_flux))
+                        n_checked=len(g["checked"]), m_max=g.get("m_max"), d_max=g.get("d_max"),
+                        shear_flux=float(shear_flux))
     rec["timings"]["guard"] = time.time() - t0
     rec["quad_err_half"] = float(TorusProblem(eng, best.nfp, best.M, best.N).quadrature_check(best.rc, best.zs))
     topo = torus_topology(best, axis)
