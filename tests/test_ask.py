@@ -334,6 +334,45 @@ def test_the_largest_says_the_budget_ran_out_only_when_it_did(monkeypatch):
         " s of the budget left: every request beyond the family verified") for w in s["words"]), s["words"]
 
 
+def test_a_size_looks_from_the_axis_before_it_gives_up(monkeypatch):
+    """A size whose first four fluxes, each half the last, verify nothing, on coils whose surfaces end far inside them
+    (CNT at 88 degrees: none beyond 2e-6 Wb): the family from the axis finds the surfaces, and the answer says the size
+    lies beyond them, not that none was found, with most of the budget left. Either way, and where there are no
+    surfaces at all, the answer's next step says the search stopped with its budget left, not to give it more."""
+    import types
+    from torux.answer import Answer
+    for edge in (2e-6, 0.0):
+        asked = []
+
+        def request(src, flux, b, o, edge=edge):
+            asked.append(flux)
+            if flux is None:
+                prof = [dict(flux=edge * k / 4, converged=True, bn_off=1e-12) for k in (1, 2, 3, 4)] if edge else []
+                return api.Result("range" if edge else "range_unverified", b, 0.1,
+                                  record=dict(profile=prof, range=dict(verified_lower_bound=edge / 2 or None)))
+            if flux <= edge:
+                return api.Result("surface", b, 0.1, surface=types.SimpleNamespace(flux=flux), iota=-0.67, record={})
+            return api.Result("undetermined", b, 0.1, record={})
+        monkeypatch.setattr(ask, "_request", request)
+        monkeypatch.setattr(ask, "_first_flux", lambda src, which, target: 3.8e-4)
+        monkeypatch.setattr(ask, "size", lambda s: dict(volume=0.5 * s.flux, minor_radius=math.sqrt(s.flux / 0.8),
+                                                        mean_cross_section=s.flux / 0.8))
+        monkeypatch.setattr(ask, "say", None)
+        monkeypatch.setattr(api, "estimate_budget", lambda src, flux: 300.0 if flux is not None else 600.0)
+        res = ask._size_search(types.SimpleNamespace(id="cnt88", request=None), "minor_radius", 0.05, 1200.0, {})
+        s = res.evidence["search"]
+        assert None in asked and res.surface is None and s["wall_s"] < 60
+        assert not any(w.startswith("found: no verified surface") for w in s["words"]) if edge else True, s["words"]
+        text = str(Answer._of(res, None))
+        nxt = " ".join(text[text.index("\nnext"):].split())
+        assert nxt.startswith("next the search stopped with ") and "budget_s than" not in nxt, text
+        assert "ask for a smaller size" in nxt and s["stop"] != "budget"
+        if edge:
+            assert any(w.startswith("largest verified here: minor radius ") for w in s["words"]), s["words"]
+            assert any(w.startswith("would need: about ") for w in s["words"])
+            assert f"flux={s['flux_asked']:.9g}" in nxt
+
+
 def _chain_records():
     """A chain the family met (torux.analysis's record of it) and an edge barrier's record with the closed line it
     tried, as a request of two field periods records them."""

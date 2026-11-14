@@ -390,6 +390,7 @@ def _size_search(src, which, target, budget_s, opts):
     what = f"{WORDS[which]} {target:.9g} {UNITS[which]}"
     F, concluding = _first_flux(src, which, target), False
     asked = []
+    from_axis = False
     while len(S.log) < MAX_SIZE_REQUESTS:
         cover = _covering(S, F) if S.size_of else None
         if cover is not None:
@@ -410,8 +411,19 @@ def _size_search(src, which, target, budget_s, opts):
         if best is not None and abs(best[1][which] - target) <= RTOL * target:
             return _size_found(S, which, target, best[0])
         pts = sorted((f, u_of(s)) for f, s in S.size_of.items())
+        if not pts and len(S.failed) >= 4 and not from_axis:
+            # four fluxes, each half the last, and no surface verified at any: the family from the magnetic axis,
+            # which finds the surfaces however small they are, and its verified lower bound asked directly
+            from_axis = True
+            r = _size_from_axis(S, src)
+            if _terminal(r):
+                return S.finish(r, [], brief=True)
+            pts = sorted((f, u_of(s)) for f, s in S.size_of.items())
+            best = min(S.size_of.items(), key=lambda kv: abs(kv[1][which] - target), default=None)
+            if best is not None and abs(best[1][which] - target) <= RTOL * target:
+                return _size_found(S, which, target, best[0])
         if not pts and len(S.failed) >= 4:
-            break            # four fluxes, each half the last, and no surface verified at any
+            break            # four fluxes, each half the last, and the family from the axis: no surface verified
         ceiling = min(list(S.failed) + [c.get("no_surface_above_Wb", np.inf) for _, c, _ in S.certs], default=np.inf)
         F_next, concluding = _next_flux(pts, u_t, S.failed, ceiling)
         if F_next is None or any(abs(F_next - a) <= 4e-16 * a for a in asked if a in S.size_of):
@@ -433,8 +445,36 @@ def _size_search(src, which, target, budget_s, opts):
         words.append(f"closest verified: {WORDS[which]} {_sz(which, best[1][which])}, at {_wb(best[0])}")
     from .api import Result
     out = Result("timeout" if S.left() <= MIN_REQUEST_S else "undetermined", S.budget, 0.0)
+    stop = "budget" if S.left() <= MIN_REQUEST_S else (
+        f"no verified surface at any of {len(S.failed)} fluxes, nor from the axis" if not S.size_of else
+        f"{len(S.log)} requests, the most a size asks" if len(S.log) >= MAX_SIZE_REQUESTS else
+        "no flux left to ask that the verified surfaces predict")
     return S.finish(out, words, reached=None, flux=None,
-                    closest=None if best is None else dict(flux=best[0], **best[1]))
+                    closest=None if best is None else dict(flux=best[0], **best[1]), stop=stop)
+
+
+def _without_request(src):
+    """The same coils with no request and no design surfaces of their own (the family from the axis outward)."""
+    if (src.request or {}).get("flux_Wb") or getattr(src, "_design_surfaces", None) is not None:
+        free = copy.copy(src)
+        free.request = None
+        free._design_surfaces = None
+        return free
+    return src
+
+
+def _size_from_axis(S, src):
+    """For a size with no surface verified at four fluxes: the no-flux request (the family from the magnetic axis)
+    and its verified lower bound asked directly. The last Result (a terminal one ends the search), or None."""
+    rng = S.ask(None, "no flux: the family of surfaces from the magnetic axis outward, after four fluxes with no "
+                      "surface verified", budget=min(S.default_budget(None), 0.4 * S.left()), src=_without_request(src))
+    if rng is None or _terminal(rng):
+        return rng
+    f_r = ((rng.record or {}).get("range") or {}).get("verified_lower_bound")
+    if not f_r or abs(float(f_r)) in S.size_of or abs(float(f_r)) in S.failed:
+        return rng
+    del rng
+    return S.ask(abs(float(f_r)), "the no-flux request's verified lower bound, asked directly")
 
 
 def _first_flux(src, which, target):
@@ -569,7 +609,10 @@ def _size_not_held(S, which, target, F_need, f_asked, cert, r):
         r.surface, r.iota = None, np.nan
         if r.status in ("surface", "range"):
             r.status = "timeout" if S.left() <= MIN_REQUEST_S else "undetermined"
-    return S.finish(r, words, reached=None, flux=F_need, flux_asked=f_asked)
+    stop = {}
+    if cert is None and S.left() > MIN_REQUEST_S:
+        stop = dict(stop="the request at the flux that size would need was undecided within its own budget")
+    return S.finish(r, words, reached=None, flux=F_need, flux_asked=f_asked, **stop)
 
 
 # --------------------------------------------------------------------------- the largest

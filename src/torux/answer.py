@@ -1183,7 +1183,17 @@ def _budget_bound(a, ev, rec):
 
 
 def _next_budget(a):
-    question = ((a.evidence or {}).get("search") or {}).get("question")
+    search = (a.evidence or {}).get("search") or {}
+    question = search.get("question")
+    stop = search.get("stop")
+    if question and stop and stop != "budget":
+        # the search ended with time to spare: more of it is not what would help
+        left = max(0.0, a.budget_s - a.wall_s)
+        f = search.get("flux_asked")
+        return (f"the search stopped with {left:.0f} s of its {a.budget_s:.0f} s budget left ({stop}): "
+                + ("ask for a smaller size" if question in ("minor_radius", "volume") else
+                   "ask for a flux directly (flux=...)")
+                + (f", or for that flux directly with a larger budget (flux={f:.9g}, budget_s=...)" if f else ""))
     if question in ("minor_radius", "volume"):
         return f"ask for a smaller size, or give a larger budget_s than {a.budget_s:.0f}"
     if question == "largest":
