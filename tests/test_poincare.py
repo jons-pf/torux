@@ -129,20 +129,79 @@ def test_the_lines_field_is_the_engines_to_1e_14(section_954):
     assert err.max() < 1e-14, err.max()
 
 
-def test_a_curve_means_a_surface(section_954):
-    """Every line with a rotational transform and no island chain closes its curve to within 1 % of the plane's
-    extent in every plane, or was followed on until its gap was seen not to close within the cap."""
+def turn_of(p, i):
+    """Line i's mean turn about the axis a field period (turns), from its own crossings of the first plane: the
+    weighted Birkhoff average of their turns."""
+    R, Z = p.R[i, 0, :p.followed[i]], p.Z[i, 0, :p.followed[i]]
+    d = np.diff(np.unwrap(np.arctan2(Z - p.axis[0, 1], R - p.axis[0, 0])))
+    t = (np.arange(len(d)) + 0.5) / len(d)
+    w = np.exp(-1.0 / (t * (1.0 - t)))
+    return float(np.sum(w * d) / np.sum(w) / (2 * np.pi))
+
+
+def widest_gap_px(p, i):
+    """The widest gap between line i's crossings next along its curve, over the planes, in pixels of the picture at
+    838 across: on a surface a turn of rho a period puts the k-th crossing at k rho round its curve."""
+    from torux.plot import poincare_pixels, poincare_windows
+    px = poincare_pixels(*poincare_windows(p.R, p.Z, p.left, p.start, p.axis))
+    rho, out = turn_of(p, i), 0.0
+    for j in range(len(p.planes)):
+        R, Z = p.R[i, j, :p.followed[i]], p.Z[i, j, :p.followed[i]]
+        s = np.argsort(np.mod((np.arange(len(R)) + 1) * rho, 1.0))
+        x, y = np.append(R[s], R[s][0]), np.append(Z[s], Z[s][0])
+        out = max(out, float(np.hypot(np.diff(x), np.diff(y)).max()) * px)
+    return out
+
+
+def surface_lines(p):
+    """Lines with a rotational transform whose mean turn a period is no rational of an island chain of 60 islands or
+    fewer (to the line's own spread, as torux.poincare tells them)."""
     import torux.poincare_section as P
+    return [i for i in np.flatnonzero(np.isfinite(p.iota) & ~p.left)
+            if not P._island(turn_of(p, i), p._spread[i] / (2 * np.pi))]
+
+
+def test_a_curve_means_a_surface(section_954):
+    """Every line on a surface reads as a closed curve at 838 pixels across, no two of its crossings next along it
+    more than 2 pixels apart, or is said to be open. QUASR 954 has lines it had to follow on for that, and one, its
+    outermost, is left open (2.8 pixels after 4,800 field periods)."""
     p = section_954
-    spans = [max(np.nanmax(p.R[:, j]) - np.nanmin(p.R[:, j]), np.nanmax(p.Z[:, j]) - np.nanmin(p.Z[:, j]))
-             for j in range(len(p.planes))]
-    o = dict(R=p.R, Z=p.Z)
-    for i in np.flatnonzero(np.isfinite(p.iota) & ~p.left):
-        rho = p.iota[i] / p.nfp
-        if P._island(rho):
-            continue
-        assert P._gaps(o, i, rho, spans) <= P.CLOSE_GAP or p.followed[i] > p.periods, i
-    assert np.any(p.followed > p.periods)                            # 954 has lines it had to follow on
+    for i in surface_lines(p):
+        assert widest_gap_px(p, i) <= 2.0 or p.open[i], (i, widest_gap_px(p, i))
+    assert np.any(p.followed > p.periods) and p.open.sum() <= 1
+
+
+def test_no_ring_of_dashes_next_to_an_island_chain():
+    """QUASR 219457, whose surfaces crowd round a chain of 15 thin islands: every line on a surface closes its curve at
+    838 pixels, or is drawn in grey and said to be open, so that no ring of dashes reads as the chain."""
+    from torux.plot import PAGES, _poincare_picture
+    p = torux.poincare(example("quasr_0219457.json"))
+    for i in surface_lines(p):
+        assert widest_gap_px(p, i) <= 2.0 or p.open[i], (i, widest_gap_px(p, i))
+    q = _poincare_picture(p)
+    assert sum(len(g) for g in q.grey) == sum(np.isfinite(p.R[p.open]).sum(axis=(0, 2)))
+    assert "curves not closed" in str(p) if p.open.any() else True
+    if HAVE_MPL:
+        colours = {tuple(np.round(c.get_facecolor()[0], 3)) for ax in p.plot().axes for c in ax.collections
+                   if len(c.get_offsets())}
+        assert tuple(np.round(matplotlib.colors.to_rgba(PAGES[False]["muted"]), 3)) in colours or not p.open.any()
+
+
+def test_each_transform_is_given_to_the_digits_it_has_settled_to(section_954):
+    """Printed and kept to the decimals whose unit is no smaller than the difference between the averages over the
+    first half and the whole (rad a period, in the transform's units), and no more: the line on the verified surface
+    then agrees with the answer in every digit but the last."""
+    p = section_954
+    period = 2 * np.pi / p.nfp
+    rows = p.lines_table().splitlines()[1:]
+    for i in np.flatnonzero(np.isfinite(p.iota)):
+        printed = rows[i].split()[3]
+        d = len(printed.split(".")[1])
+        assert float(printed) == p.iota[i] and round(p.iota[i], d) == p.iota[i]
+        assert 10.0 ** -d >= p._spread[i] / period > 10.0 ** -(d + 1) or d == 13, (i, printed, p._spread[i])
+    i = p.surface_line
+    d = len(rows[i].split()[3].split(".")[1])
+    assert abs(p.iota[i] - p._answer.iota) <= 1.5 * 10.0 ** -d
 
 
 def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
@@ -278,7 +337,9 @@ def test_crossings_are_ink_and_green_is_only_ever_a_verified_surface(solved_954,
     ink = matplotlib.colors.to_rgba(P.PAGES[False]["ink"])
     for ax in fig.axes:
         dots = [c for c in ax.collections if len(c.get_offsets())]
-        assert dots and all(np.allclose(c.get_facecolor()[0], ink) for c in dots)
+        grey = matplotlib.colors.to_rgba(P.PAGES[False]["muted"])
+        assert dots and np.allclose(dots[0].get_facecolor()[0], ink)
+        assert all(np.allclose(c.get_facecolor()[0], grey) for c in dots[1:]) and len(dots) <= 1 + section_954.open.any()
         assert ax.lines[0].get_color() == P.PAGES[False]["line"] and ax.lines[0].get_linestyle() == "-"
     for dark in (False, True):
         section_954.plot(tmp_path / "v.png", dark=dark)
@@ -381,7 +442,7 @@ def chain_of(p, i, plane=0, q_max=12):
     t = (np.arange(len(d)) + 0.5) / len(d)
     w = np.exp(-1.0 / (t * (1.0 - t)))
     rho = float(np.sum(w * d) / np.sum(w) / (2 * np.pi))
-    f = Fraction(rho).limit_denominator(12)
+    f = Fraction(rho).limit_denominator(q_max)
     q = f.denominator
     if abs(rho - float(f)) > 1e-4 or q < 2:
         return 0
@@ -398,6 +459,8 @@ def test_surfaces_end_well_inside_the_coils_and_beyond_them_lines_wander_and_lea
     assert not p.left[inner].any() and np.isfinite(p.iota[inner]).sum() >= 0.5 * inner.sum()
     assert p.left.sum() >= 2 and not np.any(p.left & inner)
     assert any(chain_of(p, i) == 11 for i in range(len(p.start)))
+    # every line that stayed has its transform: those near the edge's chains are followed on until it settles
+    assert np.all(np.isfinite(p.iota[~p.left])), p.lines_table()
 
 
 @pytest.mark.slow
@@ -405,12 +468,20 @@ def test_wendelstein_7x_shows_its_five_edge_islands():
     """W7-X standard: three lines turn once a toroidal turn (1/5 a field period) round its five edge islands at
     phi = 0, one of them clearly so in every plane."""
     p = torux.poincare(example("w7x.json"))
-    assert sum(chain_of(p, i) == 5 for i in range(len(p.start))) >= 3
-    assert any(all(chain_of(p, i, j) == 5 for j in range(3)) for i in range(len(p.start)))
+    chain = [i for i in range(len(p.start)) if chain_of(p, i) == 5]
+    assert len(chain) >= 3
+    assert any(all(chain_of(p, i, j) == 5 for j in range(3)) for i in chain)
+    # their transform is the chain's, 1, in every digit printed, and no more digits are printed than have settled
+    rows = p.lines_table().splitlines()[1:]
+    for i in chain:
+        d = len(rows[i].split()[3].split(".")[1])
+        assert p.iota[i] == round(1.0, d) and d < 12, rows[i]
 
 
 @pytest.mark.slow
 def test_quasr_797878_shows_its_wide_chain():
-    """QUASR 797878: lines round its wide chain of six islands, in every plane."""
+    """QUASR 797878: lines round its wide chain of six islands, in every plane, each with the chain's transform."""
     p = torux.poincare("quasr:797878")
-    assert sum(all(chain_of(p, i, j) == 6 for j in range(3)) for i in range(len(p.start))) >= 4
+    chain = [i for i in range(len(p.start)) if all(chain_of(p, i, j) == 6 for j in range(3))]
+    assert len(chain) >= 4
+    assert all(abs(p.iota[i] + 0.5) < 1e-4 for i in chain), p.lines_table()

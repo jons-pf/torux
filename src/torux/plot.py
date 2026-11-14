@@ -807,11 +807,14 @@ def _poincare_picture(p):
     q = _Picture()
     q.planes = np.asarray(p.planes, float)
     P = len(q.planes)
-    q.dots = []
+    # in ink, but for the lines on a surface whose curve has not closed: in grey, so that their gaps read as no chain
+    grey = np.asarray(getattr(p, "open", np.zeros(len(p.R), bool)), bool)
+    q.dots, q.grey = [], []
     for j in range(P):
-        R, Z = np.asarray(p.R)[:, j].ravel(), np.asarray(p.Z)[:, j].ravel()
-        k = np.isfinite(R) & np.isfinite(Z)
-        q.dots.append(np.column_stack([R[k], Z[k]]))
+        for out, sel in ((q.dots, ~grey), (q.grey, grey)):
+            R, Z = np.asarray(p.R)[sel, j].ravel(), np.asarray(p.Z)[sel, j].ravel()
+            k = np.isfinite(R) & np.isfinite(Z)
+            out.append(np.column_stack([R[k], Z[k]]))
     q.axis = None if p.axis is None else np.asarray(p.axis, float)
     q.sections, q.verified, q.marks = None, False, [np.zeros((0, 2)) for _ in range(P)]
     q.mark_kind, q.barrier = "o", None
@@ -828,39 +831,59 @@ def _poincare_picture(p):
         held = getattr(p, "held", None) or {}
         q.mark_kind = "x" if held.get("hyperbolic") is not None else "o"
         q.barrier = held.get("barrier")
-    # each plane's window: the crossings of the lines that stayed, the sections and the marks, with room round them
-    # for the first crossings of lines that left (the rest of those is cut at the frame), on one scale and one Z range
-    stayed = ~np.asarray(p.left, bool)
-    every = []
+    q.Rr, q.Zr = poincare_windows(p.R, p.Z, p.left, p.start, q.axis, q.sections, q.marks, q.barrier)
+    _poincare_layout(q)
+    return q
+
+
+def poincare_windows(R, Z, left, start, axis=None, sections=None, marks=None, barrier=None):
+    """Each plane's R window and the Z window a Poincaré figure draws, m: the crossings R, Z (L, P, K) of the lines
+    that stayed, the sections, the marks and the axis, with room round them for the first crossings of lines that
+    left (the rest of those is cut at the frame), on one scale and one Z range.  Needs no matplotlib."""
+    R, Z = np.asarray(R, float), np.asarray(Z, float)
+    P = R.shape[1]
+    stayed = ~np.asarray(left, bool)
+    dots, every = [], []
     for j in range(P):
-        R, Z = np.asarray(p.R)[stayed, j].ravel(), np.asarray(p.Z)[stayed, j].ravel()
-        k = np.isfinite(R) & np.isfinite(Z)
-        b = q.barrier[j][np.all(np.isfinite(q.barrier[j]), -1)] if q.barrier is not None else np.zeros((0, 2))
-        e = np.concatenate([np.column_stack([R[k], Z[k]])] + ([q.sections[j]] if q.sections else []) + [q.marks[j], b]
-                           + ([q.axis[j:j + 1]] if q.axis is not None else []))
+        r, z = R[:, j].ravel(), Z[:, j].ravel()
+        k = np.isfinite(r) & np.isfinite(z)
+        dots.append(np.column_stack([r[k], z[k]]))
+        r, z = R[stayed, j].ravel(), Z[stayed, j].ravel()
+        k = np.isfinite(r) & np.isfinite(z)
+        b = barrier[j][np.all(np.isfinite(barrier[j]), -1)] if barrier is not None else np.zeros((0, 2))
+        e = np.concatenate([np.column_stack([r[k], z[k]])] + ([sections[j]] if sections else [])
+                           + [marks[j] if marks is not None else np.zeros((0, 2)), b]
+                           + ([axis[j:j + 1]] if axis is not None else []))
         # no line that stayed crosses this plane: its window holds the crossings there are, else where lines start
-        every.append(e if len(e) else (q.dots[j] if len(q.dots[j]) else np.asarray(p.start, float).reshape(-1, 2)))
+        every.append(e if len(e) else (dots[j] if len(dots[j]) else np.asarray(start, float).reshape(-1, 2)))
     span = max(max(float(np.ptp(e[:, 0])) for e in every), float(np.ptp(np.concatenate([e[:, 1] for e in every]))))
     if not span > 0:
         span = 0.1 * max(1e-3, float(np.max(np.abs(np.concatenate(every)))))
     m = 0.08 * span
-    q.Rr = []
+    Rr = []
     for j, e in enumerate(every):
         lo, hi = float(e[:, 0].min()) - m, float(e[:, 0].max()) + m
-        drawn = np.concatenate([e, q.dots[j]])          # no wider than everything drawn needs
-        q.Rr.append((max(lo, float(drawn[:, 0].min()) - 0.02 * span), min(hi, float(drawn[:, 0].max()) + 0.02 * span)))
-        if not q.Rr[-1][1] - q.Rr[-1][0] > 0.1 * span:
-            mid = 0.5 * (q.Rr[-1][0] + q.Rr[-1][1])
-            q.Rr[-1] = (mid - 0.05 * span, mid + 0.05 * span)
+        drawn = np.concatenate([e, dots[j]])            # no wider than everything drawn needs
+        Rr.append((max(lo, float(drawn[:, 0].min()) - 0.02 * span), min(hi, float(drawn[:, 0].max()) + 0.02 * span)))
+        if not Rr[-1][1] - Rr[-1][0] > 0.1 * span:
+            mid = 0.5 * (Rr[-1][0] + Rr[-1][1])
+            Rr[-1] = (mid - 0.05 * span, mid + 0.05 * span)
     Zall = np.concatenate([e[:, 1] for e in every])
-    Aall = np.concatenate([Zall] + [d[:, 1] for d in q.dots])
-    q.Zr = (max(float(Zall.min()) - m, float(Aall.min()) - 0.02 * span),
-            min(float(Zall.max()) + m, float(Aall.max()) + 0.02 * span))
-    if not q.Zr[1] - q.Zr[0] > 0.1 * span:
-        mid = 0.5 * (q.Zr[0] + q.Zr[1])
-        q.Zr = (mid - 0.05 * span, mid + 0.05 * span)
-    _poincare_layout(q)
-    return q
+    Aall = np.concatenate([Zall] + [d[:, 1] for d in dots])
+    Zr = (max(float(Zall.min()) - m, float(Aall.min()) - 0.02 * span),
+          min(float(Zall.max()) + m, float(Aall.max()) + 0.02 * span))
+    if not Zr[1] - Zr[0] > 0.1 * span:
+        mid = 0.5 * (Zr[0] + Zr[1])
+        Zr = (mid - 0.05 * span, mid + 0.05 * span)
+    return Rr, Zr
+
+
+def poincare_pixels(Rr, Zr):
+    """Pixels a metre is in the panels of a Poincaré figure with these windows, at 838 pixels across (WIDTH at 100
+    dpi): the scale _poincare_layout gives them, with the frame's ink round them as it is before it is measured
+    (within a few per cent of the scale drawn).  Needs no matplotlib."""
+    avail = WIDTH - 2 * MARGIN - 0.6 - 0.15 - GAP_PANELS * (len(Rr) - 1)
+    return 100.0 * min(avail / sum(b - a for a, b in Rr), SECTION_MAX_H / (Zr[1] - Zr[0]))
 
 
 def _certificate_marks(p, planes):
@@ -909,13 +932,14 @@ def _frame_ink(q, dpi=FILE_DPI):
     right, bottom, top, inches from the page's bottom left."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     c = PAGES[False]
-    keep = q.dots, q.sections, q.marks, q.axis, q.barrier
-    q.dots, q.sections, q.marks, q.axis, q.barrier = [np.zeros((0, 2))] * len(q.planes), None, \
+    keep = q.dots, q.grey, q.sections, q.marks, q.axis, q.barrier
+    q.dots, q.grey, q.sections, q.marks, q.axis, q.barrier = [np.zeros((0, 2))] * len(q.planes), \
+        [np.zeros((0, 2))] * len(q.planes), None, \
         [np.zeros((0, 2))] * len(q.planes), None, None
     try:
         fig = _poincare_figure(q, False)
     finally:
-        q.dots, q.sections, q.marks, q.axis, q.barrier = keep
+        q.dots, q.grey, q.sections, q.marks, q.axis, q.barrier = keep
     fig.set_dpi(dpi)
     FigureCanvasAgg(fig)
     fig.canvas.draw()
@@ -945,10 +969,10 @@ def _poincare_figure(q, dark, pyplot=False):
 
 
 def _poincare_panel(ax, q, j, rect, c, font):
-    d = q.dots[j]
-    if len(d):
-        ax.scatter(d[:, 0], d[:, 1], s=DOT_PT ** 2, c=c["ink"], marker="o", linewidths=0, zorder=2,
-                   rasterized=True)
+    for d, colour in ((q.dots[j], c["ink"]), (q.grey[j], c["muted"])):
+        if len(d):
+            ax.scatter(d[:, 0], d[:, 1], s=DOT_PT ** 2, c=colour, marker="o", linewidths=0, zorder=2,
+                       rasterized=True)
     if q.sections is not None:
         s = q.sections[j]
         if q.verified:
