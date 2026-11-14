@@ -4,6 +4,8 @@ Twelve kinds of magnetic source, one solver. Nine hold vacuum flux surfaces, and
 
 The coils and magnets are drawn where their files put them, as copper. The tarnish and the soft sheen are decoration and carry no data. Every number below is in [`sources.json`](sources.json), with the checksum and origin of every file.
 
+The first three need no file of your own, and under each is the line that draws it again in this look, with `torux render`.
+
 The picture of all twelve is not part of the repository's CC0 dedication, and six of the renderings below (LHD, CNT, the wireframe, MUSE, ITER, the dipole) stay under the licences of the files they are drawn from: [credits](../NOTICE.md#behind-the-pictures).
 
 ## 1. QUASR 0124533
@@ -14,6 +16,8 @@ The picture of all twelve is not part of the repository's CC0 dedication, and si
 </picture>
 
 A design from QUASR: ten coils, one field period. Read with `torux.load("serial0124533.json")`.
+
+Drawn again: `torux render quasr:124533 qa.png --flux 0.110336`.
 
 **Surface verified:** 0.110336 Wb of toroidal flux, rotational transform -0.294533. The field crosses it by at most 1.1 × 10⁻¹⁵ of its strength by the solver's check and 1.0 × 10⁻¹⁵ by the independent evaluator's, and two field lines traced independently for 40 field periods stay within 4.4 × 10⁻¹⁴ of its minor radius.
 
@@ -28,6 +32,8 @@ A design from QUASR: ten coils, one field period. Read with `torux.load("serial0
 
 The Helically Symmetric eXperiment in Wisconsin: 48 modular coils. Read with `torux.load("hsx.json")` (here: [`examples/hsx.json`](../examples/hsx.json)).
 
+Drawn again: `torux render examples/hsx.json hsx.png --flux 0.0359221`.
+
 **Surface verified:** 0.0359221 Wb of toroidal flux, rotational transform 1.08551. The field crosses it by at most 3.0 × 10⁻¹⁵ of its strength by the solver's check and 2.2 × 10⁻¹⁵ by the independent evaluator's, and two field lines traced independently for 40 field periods stay within 1.1 × 10⁻¹³ of its minor radius.
 
 <sub>HSX coil set from simsopt 1.11 (hiddenSymmetries/simsopt), in torux's Fourier-filament form (MIT): [github.com/hiddenSymmetries/simsopt](https://github.com/hiddenSymmetries/simsopt).</sub>
@@ -40,6 +46,8 @@ The Helically Symmetric eXperiment in Wisconsin: 48 modular coils. Read with `to
 </picture>
 
 Wendelstein 7-X in Greifswald: 50 non-planar coils and 20 planar ones, which carry no current in this, its standard configuration. Read with `torux.load("w7x.json")` (here: [`examples/w7x.json`](../examples/w7x.json)).
+
+Drawn again: `torux render examples/w7x.json w7x.png --flux 2.21743 --budget 3600`.
 
 **Surface verified:** 2.21743 Wb of toroidal flux, rotational transform 0.979427. The field crosses it by at most 4.3 × 10⁻¹⁵ of its strength by the solver's check and 3.8 × 10⁻¹⁵ by the independent evaluator's, and two field lines traced independently for 40 field periods stay within 1.3 × 10⁻¹² of its minor radius.
 

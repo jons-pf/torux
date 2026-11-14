@@ -22,7 +22,7 @@
 
 It has done that for 231,878 of the 371,701 coil sets in [QUASR](https://quasr.flatironinstitute.org), starting from the surfaces stored with each. A second field evaluator, sharing no code with the solver's, checked every one. For 5,206 more it returned a certificate that the surface asked for cannot exist, a theorem with its hypotheses checked numerically, and for another 846 a weaker one. It never guesses: the other 133,771 it calls undetermined, three in four of them after a solve of under a minute.
 
-Above: twelve kinds of magnet, one solver. Nine carry the surface torux verified for them, drawn as light. The other three (a tokamak's poloidal coils, its perturbation coils, a levitated dipole) carry none, and that is an answer too: their field lines, the thin grey ones, never go round the machine, so no surface can enclose toroidal flux, and torux proves it. (A tokamak's surfaces need the current in its plasma, and a dipole holds its plasma on the closed lines themselves.) [Each one, close up.](visuals/README.md)
+Above: twelve kinds of magnet, one solver. Nine carry the surface torux verified for them, drawn as light. The other three (a tokamak's poloidal coils, its perturbation coils, a levitated dipole) carry none, and that is an answer too: their field lines, the thin grey ones, never go round the machine, so no surface can enclose toroidal flux, and torux proves it. (A tokamak's surfaces need the current in its plasma, and a dipole holds its plasma on the closed lines themselves.) [Each one, close up.](visuals/README.md) Draw one yourself: `uvx torux render quasr:954 mine.png`.
 
 ## Fifteen digits
 
@@ -109,8 +109,8 @@ s = torux.solve("coils.json", minor_radius=0.15)   # or flux=0.07 (Wb), volume=0
 print(s)                                 # what it found and how it was checked, or why there is no surface
 s.iota, s.volume, s.aspect_ratio         # the numbers
 s.save("input.mine")                     # a VMEC input: VMEC, VMEC++, DESC and SIMSOPT read it
-s.plot("mine.png")                       # the picture below
-s.render("hero.png")                     # the answer drawn as the machines at the top, cut open or closed
+s.plot("mine.png")                       # the first picture below
+s.render("hero.png")                     # the second: the answer drawn as the machines at the top, cut open or closed
 s.poincare().plot("lines.png")           # the field's own lines through planes of constant φ, the surface among them
 s.boozer().quasisymmetry                 # |B| in Boozer angles, and how far it is from quasi-symmetry
 
@@ -122,6 +122,13 @@ torux.many(files, table="answers.csv")        # a folder of designs, one row eac
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="visuals/plot-dark.png">
     <img src="visuals/plot-light.png" width="760" alt="What s.plot draws for the surface above: on the left the verified flux surface as a green torus, shaded by the strength of the field on it, threaded through its four copper coils. On the right are its cross-sections at three toroidal angles, an ellipse lying flat, a rounded triangle and an ellipse standing upright, and the scale of the field strength, about 0.9 to 1.1 tesla.">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="visuals/render-cut-dark.png">
+    <img src="visuals/render-cut-light.png" width="760" alt="What s.render draws for the same surface: four copper coils standing on the floor, and inside them the verified flux surface as teal light woven from its field lines. A wedge of it is cut away in front of one cross-section, where the punctures of field lines show as rings of points.">
   </picture>
 </p>
 
