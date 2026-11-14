@@ -6,7 +6,8 @@
     s.render("closed.png", cut=False)       # the machine closed: no section opened
 
 Slow where answer.plot is fast: minutes of path tracing on a laptop's cores, and the first call compiles the tracer.
-One picture and nothing else: no axes, no scale, no words.  Everything drawn comes from the answer and its source:
+Ctrl-C stops it within seconds, as a KeyboardInterrupt (torux.interrupt).  One picture and nothing else: no axes, no
+scale, no words.  Everything drawn comes from the answer and its source:
 
     the source                         -> its coils as round copper tubes of one drawing width, magnets as small steel
                                           pills along their moments, axisymmetric conductors as the solids they sweep
@@ -65,6 +66,7 @@ WIDE = 2.0 / 3.0           # the section it opens is at least this share of the 
 SECTION = dict(rings=(2, 6), px_per_ring=14, periods=160)   # the lines whose punctures show in it: two to six,
                                                              # one for each 14 pixels of the section at README size
 BAND = 64                  # rows traced at once
+CHUNK = 16                 # rows of a band in one call of the compiled tracer, between which Ctrl-C is looked for
 FIELD_SLAB = 4096          # points given to the field engine at once
 
 # The look: the hero's, sizes in the drawing's units, where the machine is FIT wide
@@ -182,17 +184,28 @@ def picture(answer, width=README_WIDTH, spp=SPP, log=None, cut=True):
 
 def trace_pages(scene, pool, spp, log=None, keep=None):
     """Path trace a scene band by band and composite both pages (``keep``, a list: each band's buffers appended)."""
+    from .interrupt import held
     W, H = scene.W, scene.H
     out = {k: np.zeros((H, W, 3), np.uint8) for k in (False, True)}
-    for r0 in range(0, H, BAND):
-        r1 = min(H, r0 + BAND)
-        buf = scene.render((r0, r1), (0, W), spp)
-        if keep is not None:
-            keep.append(((r0, r1), {k: np.asarray(v, np.float16) for k, v in buf.items()}))
-        for k in (False, True):
-            out[k][r0:r1] = PT.to8(PT.composite(buf, scene, PALETTES[k], (r0, r1), (0, W), pool=pool))
-        if log and (r1 == H or (r1 // BAND) % 8 == 0):
-            log(f"  traced rows {r1}/{H}")
+    with held() as asked:
+        for r0 in range(0, H, BAND):
+            r1 = min(H, r0 + BAND)
+            # traced CHUNK rows at a time, with Ctrl-C looked for between them: every pixel's samples are its own
+            # (their random numbers start from the pixel's index), so a band is the same to the bit however it is cut
+            parts = []
+            for c0 in range(r0, r1, CHUNK):
+                parts.append(scene.render((c0, min(r1, c0 + CHUNK)), (0, W), spp))
+                if asked():
+                    return out              # leaving the block raises KeyboardInterrupt
+            buf = {k: np.concatenate([b[k] for b in parts], axis=1 if k == "A" else 0) for k in parts[0]}
+            if keep is not None:
+                keep.append(((r0, r1), {k: np.asarray(v, np.float16) for k, v in buf.items()}))
+            for k in (False, True):
+                out[k][r0:r1] = PT.to8(PT.composite(buf, scene, PALETTES[k], (r0, r1), (0, W), pool=pool))
+            if asked():
+                return out
+            if log and (r1 == H or (r1 // BAND) % 8 == 0):
+                log(f"  traced rows {r1}/{H}")
     return out
 
 

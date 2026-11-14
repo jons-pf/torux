@@ -3,8 +3,10 @@ the crossings are where the independent tracer puts them, island chains and the 
 and the picture keeps the conventions of answer.plot: ink for crossings, green only for a verified surface."""
 import importlib.util
 import math
+import signal
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -151,6 +153,47 @@ def test_a_long_call_says_how_long_first(quasr_954, monkeypatch):
     monkeypatch.setattr(A, "say", said.append)
     torux.poincare(quasr_954, starts=[(1.0, 0.0)], turns=20)
     assert len(said) == 1 and "field lines through 40 field periods, about" in said[0]
+
+
+EIGHT = [f"{1.0 + 0.01 * k:g},0" for k in range(8)]       # eight lines on surfaces of QUASR 954
+
+
+def test_ctrl_c_stops_a_trace_within_seconds(quasr_954, ctrl_c, monkeypatch):
+    """Ctrl-C a second into the tracing of lines that take half a minute or more: a plain KeyboardInterrupt within
+    three seconds."""
+    import torux.ask as A
+    import torux.poincare_section as P
+    sent = []
+    monkeypatch.setattr(P, "SAY_AFTER", 0.0)
+    monkeypatch.setattr(A, "say", lambda text: sent.append(ctrl_c(1.0)))
+    with pytest.raises(KeyboardInterrupt):
+        torux.poincare(quasr_954, starts=[tuple(map(float, s.split(","))) for s in EIGHT], turns=2500)
+    assert sent and sent[0] and time.time() - sent[0][0] < 3.0, time.time() - sent[0][0]
+
+
+def test_ctrl_c_ends_the_command_in_one_line():
+    """torux poincare in a terminal: Ctrl-C while its lines are traced ends it within three seconds in one line, with
+    the code a shell gives a command Ctrl-C ended, and no traceback."""
+    # Python's own Ctrl-C handler, as a terminal's shell leaves it, whatever these tests were started with
+    args = [sys.executable, "-c", "import signal, sys; signal.signal(signal.SIGINT, signal.default_int_handler); "
+            "from torux.cli import main; sys.exit(main())", "poincare", example("quasr_0000954.json"), "--turns", "6000"]
+    for s in EIGHT:
+        args += ["--start", s]
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        said = p.stderr.readline()                  # "torux: ...: tracing 8 field lines through 12000 field periods"
+        assert "tracing" in said, said
+        time.sleep(1.0)
+        t = time.time()
+        p.send_signal(signal.SIGINT)
+        p.wait(timeout=60)
+        took = time.time() - t
+    finally:
+        if p.poll() is None:
+            p.kill()
+    err = p.stderr.read()
+    assert p.returncode == 130 and took < 3.0, (p.returncode, took)
+    assert err.strip() == "stopped: nothing written", err
 
 
 # ------------------------------------------------------------------------------------------------ the knobs

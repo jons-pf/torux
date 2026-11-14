@@ -13,6 +13,34 @@ def example(name):
     return os.path.join(EXAMPLES, name)
 
 
+@pytest.fixture
+def ctrl_c():
+    """Ctrl-C as a terminal sends it, to this process: send(after) sends SIGINT ``after`` seconds from now and returns
+    a list that gets the time it was sent.  Python's own handler is put in place first, as a terminal's shell leaves
+    it, whatever the tests were started with (a job in the background of a script starts with Ctrl-C ignored)."""
+    import signal
+    import threading
+    import time
+    old = signal.signal(signal.SIGINT, signal.default_int_handler)
+    timers = []
+
+    def send(after):
+        when = []
+
+        def fire():
+            when.append(time.time())
+            os.kill(os.getpid(), signal.SIGINT)
+        timers.append(threading.Timer(after, fire))
+        timers[-1].start()
+        return when
+    try:
+        yield send
+    finally:
+        for t in timers:
+            t.cancel()
+        signal.signal(signal.SIGINT, old)
+
+
 @pytest.fixture(scope="session")
 def quasr_954():
     import torux

@@ -222,6 +222,36 @@ def test_torux_render_solves_prints_and_draws(monkeypatch, tmp_path, capsys):
     assert "not drawn" in capsys.readouterr().err and not (tmp_path / "n.png").exists()
 
 
+def test_ctrl_c_stops_the_path_tracing_within_seconds(drawn_954, ctrl_c):
+    """Ctrl-C a second into the tracing of the README-sized picture: a plain KeyboardInterrupt within three seconds,
+    and Python's own handler of Ctrl-C back in place."""
+    import signal
+    import time
+    scene, pool = RD.build(drawn_954, RD.README_WIDTH, cut=True)
+    scene.render((0, 1), (0, 1), 1)                         # compiled before the clock starts
+    sent = ctrl_c(1.0)
+    with pytest.raises(KeyboardInterrupt):
+        RD.trace_pages(scene, pool, RD.SPP)
+    assert sent and time.time() - sent[0] < 3.0, time.time() - sent[0]
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+def test_ctrl_c_ends_torux_render_in_one_line(solved_954, ctrl_c, monkeypatch, tmp_path, capsys):
+    """torux render: Ctrl-C a second after it says it is rendering ends it in one line, code 130, nothing written."""
+    import torux.cli as C
+    said = []
+    real = C._say
+
+    def say(text):
+        real(text)
+        if text.startswith("rendering"):
+            said.append(ctrl_c(1.0))
+    monkeypatch.setattr(C, "_say", say)
+    f = tmp_path / "q.png"
+    assert C.main(["render", example("quasr_0000954.json"), str(f), "--flux", "0.05"]) == 130
+    assert said and capsys.readouterr().err.strip().endswith("stopped: nothing written") and not f.exists()
+
+
 def test_a_wide_chains_lines_are_told_apart_by_their_rotation():
     """Punctures a field period apart: on a circle round the axis at an irrational rotation, a surface. Round one of
     six elliptic points, hopping a sixth of a turn each period, an island of a q = 6 chain. Steps at random, chaos.

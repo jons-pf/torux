@@ -233,6 +233,19 @@ def _render_args(sub):
     add_source_choices(r)
 
 
+def _stopped(run):
+    """run(a), where Ctrl-C ends the command in one line, with the code a shell gives a command Ctrl-C ended (130)."""
+    def wrapped(a):
+        try:
+            return run(a)
+        except KeyboardInterrupt:
+            print("stopped: nothing written", file=sys.stderr)
+            return 130
+    wrapped.__doc__ = run.__doc__
+    return wrapped
+
+
+@_stopped
 def _render(a):
     import os
     import warnings
@@ -302,6 +315,7 @@ def _poincare_args(sub):
     add_source_choices(s)
 
 
+@_stopped
 def _poincare(a):
     import math
     import os
@@ -336,11 +350,16 @@ def _poincare(a):
     print(p)
     print("\n" + p.lines_table())
     if picture is not None:
+        there = os.path.exists(picture)
         try:
             p.plot(picture, dark=a.dark)
         except (ImportError, OSError, ValueError) as e:
             print(f"error   {e}", file=sys.stderr)
             return 1
+        except KeyboardInterrupt:
+            if not there and os.path.exists(picture):
+                os.remove(picture)              # half a picture is not one
+            raise
     return 0
 
 

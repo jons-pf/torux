@@ -18,10 +18,13 @@ Coils, magnets and the 1/R field go through one compiled kernel on the engine's 
 coil far from a line is summed on every 2nd to 16th of its nodes where that rule was measured, round the magnetic
 axis, within STRIDE_TOL of the field's strength of the rule on all of them (_field, _reach): the lines' field is the
 engine's to 1e-14.  Rings and axisymmetric conductors go through the same scheme in numpy on the engine's field.
+The kernel is called for about CHUNK_S seconds of periods at a time, and Ctrl-C between two calls ends the trace in a
+KeyboardInterrupt (torux.interrupt).
 """
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 from numba import njit, prange
@@ -37,6 +40,7 @@ STRIDE_TOL = 1e-15          # a coil's coarser rule is taken where it was measur
 K = 5                       # sequences of the extrapolation: order 10 (more amplify the rounding more)
 FRAC = 1e-3                 # a line stops where |B_phi| < FRAC |B| (torux.fasttrace's convention)
 GROUP_MAX = 8               # lines integrated in lock step by one task of the kernel
+CHUNK_S = 0.5               # seconds of the kernel per call, between which Ctrl-C is looked for (torux.interrupt)
 
 
 def neville_divisors(k=K):
@@ -623,11 +627,23 @@ class Tracer:
         dstop2 = self.dstop ** 2 if len(self.nodes) else 0.0
         if self.fast and L:
             import numba
+            from .interrupt import held
             G = int(max(1, min(GROUP_MAX, -(-L // max(1, numba.get_num_threads())))))
             sR, sZ, sp = np.full(L, np.nan), np.full(L, np.nan), np.full(L, np.nan)
-            _kernel(y, comp, theta, lost, done, sR, sZ, sp, float(phi0), 0, int(nper), sc.h, sc.off, sc.plane,
-                    sc.axR, sc.axZ, sc.period, self.k, self.nsf, self.rtab, self.sign, FRAC, self.box, dstop2,
-                    self.nodes, recR, recZ, wind, G, self.r, self.w, self.lv, self.ci, self.smp, self.reach, self.ext)
+            # in chunks of about CHUNK_S seconds, with Ctrl-C checked between them: each period goes on from the
+            # state the last left, so the lines are the same to the bit however the periods are cut
+            n0, size = 0, 1
+            with held() as asked:
+                while n0 < nper and not asked() and not lost.all():
+                    n1 = min(int(nper), n0 + size)
+                    t = time.perf_counter()
+                    _kernel(y, comp, theta, lost, done, sR, sZ, sp, float(phi0), n0, n1, sc.h, sc.off, sc.plane,
+                            sc.axR, sc.axZ, sc.period, self.k, self.nsf, self.rtab, self.sign, FRAC, self.box,
+                            dstop2, self.nodes, recR, recZ, wind, G, self.r, self.w, self.lv, self.ci, self.smp,
+                            self.reach, self.ext)
+                    per = (time.perf_counter() - t) / (n1 - n0)
+                    size = int(max(1, min(4 * size, CHUNK_S / max(per, 1e-9))))
+                    n0 = n1
             stop = np.column_stack([sR, sp - phi0, sZ])
         elif L:
             self._run_numpy(y, comp, theta, lost, done, stop, sc, nper, phi0, dstop2, recR, recZ, wind)
