@@ -316,6 +316,26 @@ def test_an_island_band_says_what_it_rests_on():
         assert "taken to be invariant: measured, not proved" in " ".join(tori.split()) and "theorem" not in tori
 
 
+def test_an_open_answer_names_only_the_certificates_that_ran():
+    """An undetermined request names the certificates it tried by their own records: an edge barrier that
+    torux.analysis.certify_request kept as the request's certificate (no torus beyond the chain, so no island band
+    was possible) is an edge barrier, and an island band is said only where one was tried."""
+    def tried(rec):
+        rows = [line for line in str(Answer._of(Result("undetermined", 300.0, 290.0, record=rec), 0.006)).splitlines()]
+        return " ".join(" ".join(rows[next(i for i, r in enumerate(rows) if r.startswith("tried")):]).split())
+    edge = dict(kind="edge_barrier", ok=False, F_last=0.0036, request=0.006, reason="no hyperbolic line reached")
+    t = tried(dict(status="undetermined", certificate=edge, chains=[], jumps=[]))
+    assert "an edge barrier, which did not hold the request" in t and "island band" not in t
+    # the same record kept twice (as the design path does), and an island band beside it
+    band = dict(kind="island_band_manifold", ok=False, chain=dict(p=1, q=6), reason="chain too weak")
+    t = tried(dict(status="undetermined", edge_barrier=edge, certificate=edge, bracket_certificate=band))
+    assert t.count("an edge barrier") == 1 and "an island band, which did not hold the request" in t
+    # torux.analysis.certify_request's own failure of an island band has no kind, only its chain
+    t = tried(dict(status="undetermined", certificate=dict(ok=False, reason="no elliptic line found for the chain",
+                                                           chain=(1, 6))))
+    assert "an island band, which did not hold the request" in t and "edge barrier" not in t
+
+
 # ---------------------------------------------------------------------------------------------- the slow statuses
 @pytest.mark.slow
 def test_a_range_says_how_far_it_was_followed_and_why_not_further():

@@ -1155,11 +1155,25 @@ def _tried(rec):
     b = rec.get("bracket") or {}
     if b.get("log") or b.get("T1") or b.get("T2"):
         out.append("tori either side of the request")
-    if rec.get("edge_barrier") is not None or rec.get("bracket_edge_barrier") is not None:
-        out.append("an edge barrier, which did not hold the request")
-    if rec.get("certificate") is not None or rec.get("bracket_certificate") is not None:
-        out.append("an island band, which did not hold the request")
+    # the certificates by what each record says it was: an edge barrier's record can stand in
+    # record['certificate'] (torux.analysis.certify_request when no torus was found beyond the chain)
+    ran = ["an edge barrier" for k in ("edge_barrier", "bracket_edge_barrier") if rec.get(k) is not None]
+    ran += [_attempted(rec[k]) for k in ("certificate", "bracket_certificate") if rec.get(k) is not None]
+    for what in dict.fromkeys(ran):
+        out.append(f"{what}, which did not hold the request")
     return out
+
+
+def _attempted(c):
+    """The certificate a record from a request stands for, in words: an edge barrier, an island band, or the kind
+    the record gives when it is neither."""
+    kind = str((c.get("kind") if isinstance(c, dict) else None) or "")
+    if kind.startswith(("edge", "exit_curve", "lost_curve", "lost_ring")):
+        return "an edge barrier"
+    if kind.startswith(("island", "manifold_band")) or (isinstance(c, dict) and not kind
+                                                        and ("chain" in c or "f_island" in c)):
+        return "an island band"
+    return f"a certificate ({kind.replace('_', ' ')})" if kind else "a certificate"
 
 
 def _budget_bound(a, ev, rec):
