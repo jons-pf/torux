@@ -148,6 +148,12 @@ def solve(source, flux=None, *, budget_s=None, tol=3e-15, verify=True, trace_lin
     with B.scope(deadline):
         out = _solve(req, src, surfs, budget, t0, deadline)
     _truthful(out, req)
+    try:
+        from .chainlist import of_record
+        # the island chains the request identified, whatever its outcome (torux.chainlist)
+        out.evidence["chains"] = of_record(out.record)
+    except Exception:  # noqa: BLE001  (a record of an unexpected shape costs the list, never the answer)
+        out.evidence["chains"] = []
     out.wall_s = time.time() - t0
     if out.wall_s > budget:
         out.evidence["budget_exceeded_s"] = out.wall_s - budget

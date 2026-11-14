@@ -32,6 +32,7 @@
 | `*_general.py` | the same without stellarator symmetry |
 | **When there is no surface** | |
 | `chains.py`, `chainfind.py`, `manifolds.py` | island chains and the manifolds of their X lines |
+| `chainlist.py` | every chain a request identified, read from its record into one list |
 | `islandband.py`, `certify.py` | the island-band certificates |
 | `barrier.py`, `edgebound.py`, `exitcurve*.py`, `escape.py` | the edge: bounds on the flux any surface can enclose |
 | `nonstell*.py` | sources that are not stellarators: a tokamak's coils, perturbation coils, dipoles |

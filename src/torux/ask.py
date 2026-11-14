@@ -193,6 +193,7 @@ class _Search:
             entry["family_reached_Wb"] = max(fam) if fam else None
             entry["verified_lower_bound_Wb"] = rg.get("verified_lower_bound")
         entry["default_budget"] = bool(b >= self.default_budget(flux))
+        entry["chains"] = [dict(c, request=len(self.log) + 1) for c in _chains(r)]
         self.log.append(entry)
         r._ask_entry = entry
         at = "no flux (the family from the axis)" if flux is None else _wb(float(flux))
@@ -218,11 +219,18 @@ class _Search:
                      "(answer.evidence['search']['requests'])")
         if self.missed and not brief:
             words = list(words) + [self.missed]
+        from .chainlist import merge
+        chains = merge([(i + 1, e.get("chains")) for i, e in enumerate(self.log)])
+        if chains and not brief:
+            words = list(words) + [_chain_words(chains)]
         r.evidence["search"] = dict(question=self.question, asked=self.asked, budget_s=self.budget,
                                     budget_stated=self.stated, wall_s=time.time() - self.t0, requests=self.log,
                                     words=[f"asked: {self.what}"] + ([] if brief else list(words) + [
                                         req_words, f"budget: {budget_words}"]),
                                     **fields)
+        # every chain any request of the search identified, once each (per request in requests[i]['chains'])
+        r.evidence["search"]["chains"] = chains
+        r.evidence["chains"] = chains
         r.budget_s = self.budget
         r.wall_s = time.time() - self.t0
         return r
@@ -248,6 +256,35 @@ class _Search:
         return (dict(request=k, flux=e.get("flux"), budget_s=e.get("budget_s")),
                 f"solved at that flux (request {k}, with a budget of {e.get('budget_s', 0):.0f} s), not scaled or "
                 f"interpolated")
+
+
+def _chains(r):
+    """The island chains request ``r`` identified (torux.chainlist), [] when its record holds none."""
+    from .chainlist import of_record
+    try:
+        return of_record(r.record)
+    except Exception:  # noqa: BLE001  (a record of an unexpected shape costs the list, never the search)
+        return []
+
+
+def _chain_words(chains):
+    """The chains a search met, in one line."""
+    from fractions import Fraction
+    parts = []
+    for c in chains[:6]:
+        io = c.get("iota")
+        name = (f"iota = {Fraction(int(round(io * c['q'])), c['q'])}" if io is not None
+                else f"period {c['q']}")
+        if c.get("flux_Wb") is not None:
+            name += f" near {c['flux_Wb']:.3g} Wb"
+        if c.get("half_width_Wb") is not None:
+            name += f", half width about {c['half_width_Wb']:.1e} Wb"
+        k = c["found_by"]
+        req = f"request{'s' if len(k) > 1 else ''} {', '.join(str(x) for x in k)}"
+        parts.append(name + f" ({req}: {' and '.join(c['found_in'])})")
+    more = len(chains) - len(parts)
+    return ("chains: " + " | ".join(parts) + (f" | and {more} more" if more > 0 else "")
+            + " (answer.evidence['chains'])")
 
 
 def verified(r):

@@ -1,12 +1,42 @@
-"""Island chains as torux.chains measures them: the pendulum half width of a chain against the pendulum's own, and
-the family torus its shear is taken at."""
+"""The island chains a request identifies, in its answer whatever the outcome (torux.chainlist): read from the
+records the stages write, kept per request and for a whole search, through save and load. No solve: the records
+are as torux.analysis writes them."""
 import types
 
 import numpy as np
 
-from torux import chains
+from torux import api, ask, chainlist, chains
+from torux.analysis import chain_record
+from torux.answer import Answer
+from torux.orbits import ClosedLine
 
 NFP = 2
+
+
+def _line(residue, R=0.3, a=0.01):
+    """A symmetric closed line of period 6 (q = 6 field periods) round (R, 0) at radius a."""
+    return ClosedLine(q=6, nfp=NFP, phi0=0.0, a=np.array([R, a]), b=np.array([0.0, a]), res=1e-13, converged=True,
+                      residue=residue)
+
+
+def _chain():
+    ch = chains.Chain(p=-1, q=6, iota_r=-1 / 3, lines=[_line(2.5e-5), _line(-2.4e-5, a=0.012)], flux_r=-0.00145,
+                      shear=-3.3, half_width_est=4.9e-4)
+    ch.O, ch.X = ch.lines[:1], ch.lines[1:]
+    ch.info["shear_at"] = dict(index=6, n_tori=10, flux=-0.00129, iota=-0.33253)
+    return ch
+
+
+def test_the_record_of_a_chain_keeps_every_crossing_of_its_lines():
+    """A chain the family met is recorded with each closed line's q crossings of the plane phi = 0, not only the
+    first, and with the family torus its shear (and so its half width) was taken at."""
+    ch = _chain()
+    rec = chain_record(ch)
+    for d, ln in zip(rec["lines"], ch.lines):
+        assert d["section"] == ln.section_points(0.0).tolist() and len(d["section"]) == 6
+        assert d["R0"] == d["section"][0] and d["residue"] == ln.residue
+    assert rec["shear_at"] == ch.info["shear_at"]
+    assert (rec["p"], rec["q"], rec["half_width_est"], rec["flux_r"]) == (-1, 6, 4.9e-4, -0.00145)
 
 
 def test_a_chain_says_which_family_torus_its_shear_is_from(monkeypatch):
@@ -61,3 +91,86 @@ def test_the_pendulum_half_width_is_the_pendulums(monkeypatch):
         assert abs(ch.half_width_est - width) < 1e-3 * width, (p, q, ch.half_width_est, width)
 
 
+def test_every_kind_of_record_gives_its_chains():
+    """The family's chains, an island band's chain (torux.analysis's and torux.islandband's records) and an edge
+    barrier's closed lines, each as far as its stage computed it."""
+    rec = dict(nfp=NFP, chains=[chain_record(_chain())],
+               certificate=dict(kind="edge_barrier", ok=False, plane_phi=0.0,
+                                screened=[dict(q=5, p=-2, residue=-0.41, points=[[0.4, 0.0]] * 5, plane_phi=0.0,
+                                               lost=[]), dict(q=7, p=-3, residue=0.2, points=[[0.41, 0.0]] * 7,
+                                                              plane_phi=0.0, lost=[]), dict(reason="not hyperbolic")],
+                                candidates=[dict(q=5, p=-2, residue=-0.41, ok=False, reason="not lost")]),
+               bracket_certificate=dict(kind="island_band_manifold", ok=False, interval=[0.0013, 0.0016],
+                                        chain=dict(p=-1, q=6, X_residues=[-2.4e-5], O_residues=[2.5e-5])))
+    got = chainlist.of_record(rec)
+    fam = [c for c in got if c["found_in"] == "family"][0]
+    assert (fam["p"], fam["q"], fam["iota"], fam["flux_Wb"], fam["half_width_Wb"]) == (-1, 6, -1 / 3, 0.00145, 4.9e-4)
+    assert fam["O_residue"] == 2.5e-5 and [x["residue"] for x in fam["X"]] == [-2.4e-5]
+    assert len(fam["O"][0]["section"]) == 6 and fam["O"][0]["plane_phi"] == 0.0
+    band = [c for c in got if c["found_in"] == "island band"][0]
+    assert band["band_Wb"] == [0.0013, 0.0016] and band["O_residue"] == 2.5e-5 and not band["certified"]
+    edge = {c["q"]: c for c in got if c["found_in"] == "edge barrier"}
+    assert sorted(edge) == [5, 7] and not edge[5]["certified"]
+    assert (edge[5]["p"], edge[5]["iota"], len(edge[5]["X"]), edge[5]["X"][0]["residue"]) == (-2, -0.8, 1, -0.41)
+    assert len(edge[5]["X"][0]["section"]) == 5 and edge[7]["O"][0]["residue"] == 0.2 and edge[7]["X"] == []
+    # torux.analysis.certify_request's island band, its chain a pair, and a record with no chain at all
+    one = chainlist.of_record(dict(nfp=NFP, certificate=dict(kind="island_band", ok=True, chain=(-1, 6),
+                                                              O_residue=2.5e-5, interval=[0.0013, 0.0016])))
+    assert one[0]["certified"] and one[0]["q"] == 6 and one[0]["O"] == [dict(residue=2.5e-5)]
+    assert chainlist.of_record(dict(nfp=NFP, chains=[], jumps=[])) == [] and chainlist.of_record(None) == []
+
+
+def test_a_request_that_fails_keeps_its_chains(monkeypatch, tmp_path):
+    """A single request by flux that ends undetermined: the chains of its record are in its evidence, and both are
+    there after save and load."""
+    rec = dict(nfp=NFP, status="undetermined", chains=[chain_record(_chain())], jumps=[dict(p=-1, q=6, ok=False)])
+    monkeypatch.setattr(api, "_solve", lambda req, src, surfs, budget, t0, deadline: api.Result(
+        "undetermined", budget, 0.0, record=rec))
+    res = api.solve(types.SimpleNamespace(id="coils", request=None, parts=[]), 0.006, budget_s=10.0)
+    assert res.status == "undetermined"
+    assert [(c["p"], c["q"], c["found_in"]) for c in res.evidence["chains"]] == [(-1, 6, "family")]
+    path = tmp_path / "a.json"
+    Answer._of(res, 0.006).save(str(path))
+    back = Answer.read(str(path))
+    assert back.evidence["chains"] == res.evidence["chains"]
+    assert back.record["chains"][0]["lines"][1]["section"] == rec["chains"][0]["lines"][1]["section"]
+
+
+def _cnt(tilt_deg, ratio, i_il=170e3):
+    """The Columbia Non-neutral Torus's coils: two circular interlinked coils of radius 0.405 m, centres 0.313 m from
+    the machine axis, their planes tilt_deg apart, and two circular poloidal field coils of radius 1.08 m at +-0.405 m,
+    with I_IL / I_PF = ratio (two field periods, stellarator symmetric)."""
+    import torux
+    a, d, r_pf, h_pf = 0.405, 0.313, 1.08, 0.405
+    th = np.radians(tilt_deg) / 2.0
+    s, c = np.sin(th), np.cos(th)
+    coef = np.zeros((4, 3, 3))
+    coef[0, 0], coef[0, 1], coef[0, 2] = [d, 0.0, a], [0.0, a * s, 0.0], [0.0, -a * c, 0.0]
+    coef[1, 0], coef[1, 1], coef[1, 2] = [-d, 0.0, -a], [0.0, a * s, 0.0], [0.0, a * c, 0.0]
+    coef[2, 0], coef[2, 1], coef[2, 2] = [0.0, 0.0, r_pf], [0.0, r_pf, 0.0], [h_pf, 0.0, 0.0]
+    coef[3, 0], coef[3, 1], coef[3, 2] = [0.0, 0.0, r_pf], [0.0, -r_pf, 0.0], [-h_pf, 0.0, 0.0]
+    i_pf = -i_il / ratio
+    return torux.Source(id=f"cnt_tilt{tilt_deg:g}_ratio{ratio:g}", parts=[torux.FourierCurves(coef, np.array(
+        [i_il, -i_il, i_pf, -i_pf]))], nfp=2, stellsym=True)
+
+
+def test_a_request_past_the_last_chain_keeps_the_chain_and_names_its_edge_barrier(tmp_path):
+    """CNT at 88 degrees and I_IL / I_PF = 3.632, whose surfaces end within 2e-6 Wb of the axis, asked for 3.79e-4 Wb:
+    the family stalls at the iota = -2/3 chain and cannot jump it, so the only certificate tried is an edge barrier.
+    The answer says so and no island band, and it keeps the chain (its p/q, O line residue, half width) and the closed
+    lines the edge barrier screened beyond it, with their crossings, through save and load."""
+    import torux
+    a = torux.solve(_cnt(88, 3.632), flux=0.00037895125037584076, budget_s=300)
+    text = " ".join(str(a).split())
+    assert a.status == "undetermined" and a.record["certificate"]["kind"] == "edge_barrier"
+    assert "an edge barrier, which did not hold the request" in text and "island band" not in text
+    fam = [c for c in a.evidence["chains"] if c["found_in"] == "family"]
+    assert [(c["p"], c["q"]) for c in fam] == [(-1, 3)] and abs(fam[0]["iota"] + 2 / 3) < 1e-15
+    # (a thin chain: half widths of a few 1e-6 Wb at most, where the verified surfaces end within 2e-6 Wb)
+    assert 0 < fam[0]["O_residue"] < 1e-3 and 1e-7 < fam[0]["half_width_Wb"] < 5e-6, fam[0]
+    assert all(len(ln["section"]) == 3 for ln in fam[0]["O"] + fam[0]["X"])
+    edge = [c for c in a.evidence["chains"] if c["found_in"] == "edge barrier"]
+    assert edge and all(ln.get("section") for c in edge for ln in c["O"] + c["X"])
+    path = tmp_path / "cnt88.json"
+    a.save(str(path))
+    assert Answer.read(str(path)).evidence["chains"] == a.evidence["chains"]

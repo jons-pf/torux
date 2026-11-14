@@ -883,11 +883,7 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             # the chain's lines and the jump hold the family's deadline too: their closed-line and fixed-iota
             # Newton solves were never cut
             ch = analyse_chain(eng, tori, p, q, verbose=verbose, deadline=fam_deadline)
-            out["chains"].append(dict(p=p, q=q, iota_r=ch.iota_r, flux_r=ch.flux_r, shear=ch.shear,
-                                      half_width_est=ch.half_width_est,
-                                      lines=[dict(residue=l.residue, R0=l.section_points(0.0)[0].tolist(),
-                                                  res=l.res) for l in ch.lines],
-                                      **({"cut": True} if ch.info.get("cut") else {})))
+            out["chains"].append(chain_record(ch))
             with _budget.scope(fam_deadline):
                 new = jump_over(cont, tori, ch, direction=math.copysign(1.0, diota) if diota else 1.0,
                                 verbose=verbose, axis=ax)
@@ -1080,6 +1076,17 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
         out["traceback"] = traceback.format_exc()
         out["timings"]["total"] = time.time() - t0
         return out
+
+
+def chain_record(ch):
+    """A chain the family met (torux.chains.Chain), as the record keeps it: p/q, the resonance's iota, flux and shear,
+    the pendulum half width, and each closed line's residue, Newton residual and crossings (R, Z) of the plane
+    phi = 0 (R0 the first of them). shear_at: the family torus the shear was taken at."""
+    return dict(p=ch.p, q=ch.q, iota_r=ch.iota_r, flux_r=ch.flux_r, shear=ch.shear, half_width_est=ch.half_width_est,
+                lines=[dict(residue=l.residue, R0=l.section_points(0.0)[0].tolist(), res=l.res,
+                            section=l.section_points(0.0).tolist()) for l in ch.lines],
+                **({"shear_at": ch.info["shear_at"]} if ch.info.get("shear_at") else {}),
+                **({"cut": True} if ch.info.get("cut") else {}))
 
 
 def certify_request(eng, cont, brackets, request, tol=3e-15, deadline=None, verbose=False, axis=None):

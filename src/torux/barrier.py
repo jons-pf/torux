@@ -4229,6 +4229,7 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
             ranked = [p_ for p_ in pre if p_.get("ok") and p_.get("lost_c")]
             ranked.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue, p_["orb"].info.get("ratio_mean", np.inf)))
             out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_.get("lost_c", {})),
+                                     p=p_["orb"].p, points=p_["orb"].pts.tolist(), plane_phi=float(sec.phi0),
                                      ratio=p_["orb"].info.get("ratio_mean"),
                                      start_ok={k: bool(v.get("ok")) for k, v in p_.get("loc", {}).items()},
                                      delta0={k: v.get("delta0") for k, v in p_.get("loc", {}).items()},
@@ -4319,6 +4320,8 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                         gained.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue,
                                                     p_["orb"].info.get("ratio_mean", np.inf)))
                         out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_["lost_c"]),
+                                                 p=p_["orb"].p, points=p_["orb"].pts.tolist(),
+                                                 plane_phi=float(sec.phi0),
                                                  ratio=p_["orb"].info.get("ratio_mean"), extended=True) for p_ in gained]
                         phases.append(gained[:max_candidates])
             if hit:

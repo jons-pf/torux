@@ -279,6 +279,59 @@ def test_an_answer_says_when_the_budget_left_no_room_for_what_was_asked_with_it(
 
 
 # --------------------------------------------------------------------------- slow: minutes each
+def _chain_records():
+    """A chain the family met (torux.analysis's record of it) and an edge barrier's record with the closed line it
+    tried, as a request of two field periods records them."""
+    sec = [[0.3 + 0.01 * math.cos(k * math.pi / 3), 0.01 * math.sin(k * math.pi / 3)] for k in range(6)]
+    fam = dict(p=-1, q=6, iota_r=-1 / 3, flux_r=-0.00145, shear=-3.3, half_width_est=4.9e-4,
+               lines=[dict(residue=2.5e-5, R0=sec[0], res=1e-13, section=sec),
+                      dict(residue=-2.4e-5, R0=sec[1], res=1e-13, section=sec[1:] + sec[:1])])
+    edge = dict(kind="edge_barrier", ok=False, plane_phi=0.0,
+                candidates=[dict(q=5, p=-2, residue=-0.41, ok=False, reason="not lost")])
+    return fam, edge
+
+
+def test_every_chain_a_search_met_is_in_its_answer_and_survives_save_and_load(monkeypatch, tmp_path):
+    """largest=True where no request verifies: the chain the family from the axis met and the closed line the failed
+    requests' edge barriers tried are in each request's entry with its number, once each for the whole search with
+    the requests that found them, said in the answer's words, and the same after save and load."""
+    from torux.answer import Answer
+    import types
+    fam, edge = _chain_records()
+
+    def request(src, flux, b, o):
+        if flux is None:
+            prof = [dict(flux=0.0018 * k / 4, converged=True, bn_off=1e-12) for k in (1, 2, 3, 4)]
+            return api.Result("range_unverified", b, 0.1, record=dict(nfp=2, chains=[fam], profile=prof,
+                                                                      range=dict(verified_lower_bound=None)))
+        return api.Result("undetermined", b, 0.1, record=dict(nfp=2, chains=[], certificate=edge))
+    monkeypatch.setattr(ask, "_request", request)
+    monkeypatch.setattr(ask, "say", None)
+    monkeypatch.setattr(api, "estimate_budget", lambda src, flux: 300.0 if flux is not None else 600.0)
+    res = ask._largest(types.SimpleNamespace(id="coils", request=None), 1200.0, {})
+    s = res.evidence["search"]
+    assert res.status == "undetermined" and len(s["requests"]) >= 3
+    first = s["requests"][0]["chains"]
+    assert [(c["p"], c["q"], c["iota"], c["flux_Wb"], c["half_width_Wb"], c["request"]) for c in first] == [
+        (-1, 6, -1 / 3, 0.00145, 4.9e-4, 1)]
+    assert len(first[0]["O"][0]["section"]) == 6 and first[0]["X"][0]["residue"] == -2.4e-5
+    for k, e in enumerate(s["requests"][1:], start=2):
+        assert [(c["p"], c["q"], c["found_in"], c["request"]) for c in e["chains"]] == [(-2, 5, "edge barrier", k)]
+    whole = {(c["p"], c["q"]): c for c in s["chains"]}
+    assert set(whole) == {(-1, 6), (-2, 5)} and res.evidence["chains"] == s["chains"]
+    assert whole[(-1, 6)]["found_by"] == [1] and whole[(-1, 6)]["half_width_Wb"] == 4.9e-4
+    assert whole[(-2, 5)]["found_by"] == list(range(2, len(s["requests"]) + 1))
+    assert any(w.startswith("chains: iota = -1/3 near 0.00145 Wb, half width about 4.9e-04 Wb (request 1: family) | "
+                            "iota = -4/5 (requests 2, ") for w in s["words"]), s["words"]
+    path = tmp_path / "largest.json"
+    Answer._of(res, None).save(str(path))
+    back = Answer.read(str(path)).evidence
+    assert back["chains"] == s["chains"] and back["search"]["chains"] == s["chains"]
+    assert [e["chains"] for e in back["search"]["requests"]] == [e["chains"] for e in s["requests"]]
+    text = str(Answer.read(str(path)))
+    assert any(line.startswith("chains ") and "iota = -1/3 near 0.00145 Wb" in line for line in text.splitlines())
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("which,target", [("minor_radius", 0.11), ("volume", 0.3)])
 def test_size_hsx(which, target):
