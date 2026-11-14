@@ -240,7 +240,7 @@ def _render(a):
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1
-    print(res)
+    print(res, flush=True)                  # the answer stands before the minutes of tracing, into a pipe too
     _say(f"rendering {a.file}: minutes of path tracing")
     try:
         res.render(a.file, dark=a.dark, cut=not a.closed)
