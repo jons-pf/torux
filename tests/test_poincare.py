@@ -66,14 +66,15 @@ def test_a_line_started_on_the_verified_surface_stays_on_it(solved_954, section_
 
 
 def test_its_rotational_transform_is_the_answers(solved_954, section_954):
-    """The rotational transform of the line on the surface is the answer's to 1e-8 (to 1.1e-13 measured)."""
+    """The rotational transform of the line on the surface, kept to the nine decimals it has settled to, is the
+    answer's to 1e-8 (1.1e-10 measured)."""
     p = section_954
     assert abs(p.iota[p.surface_line] - solved_954.iota) < 1e-8, (p.iota[p.surface_line], solved_954.iota)
 
 
 def test_the_crossings_are_where_the_independent_tracer_puts_them(section_954):
     """Three lines' crossings of each plane over their first ten turns against torux.reference.trace (its own field,
-    Gauss-Legendre steps, no code shared): within 1e-11 m (4e-14 m measured)."""
+    Gauss-Legendre steps, no code shared): within 1e-11 m (4.3e-14 m measured)."""
     from torux.reference.trace import poincare as reference
     p = section_954
     src = p._source
@@ -236,7 +237,8 @@ def test_ctrl_c_ends_the_command_in_one_line():
     the code a shell gives a command Ctrl-C ended, and no traceback."""
     # Python's own Ctrl-C handler, as a terminal's shell leaves it, whatever these tests were started with
     args = [sys.executable, "-c", "import signal, sys; signal.signal(signal.SIGINT, signal.default_int_handler); "
-            "from torux.cli import main; sys.exit(main())", "poincare", example("quasr_0000954.json"), "--turns", "6000"]
+            "from torux.cli import main; sys.exit(main())", "poincare", example("quasr_0000954.json"),
+            "--turns", "6000"]
     for s in EIGHT:
         args += ["--start", s]
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -339,7 +341,8 @@ def test_crossings_are_ink_and_green_is_only_ever_a_verified_surface(solved_954,
         dots = [c for c in ax.collections if len(c.get_offsets())]
         grey = matplotlib.colors.to_rgba(P.PAGES[False]["muted"])
         assert dots and np.allclose(dots[0].get_facecolor()[0], ink)
-        assert all(np.allclose(c.get_facecolor()[0], grey) for c in dots[1:]) and len(dots) <= 1 + section_954.open.any()
+        assert all(np.allclose(c.get_facecolor()[0], grey) for c in dots[1:])
+        assert len(dots) <= 1 + section_954.open.any()
         assert ax.lines[0].get_color() == P.PAGES[False]["line"] and ax.lines[0].get_linestyle() == "-"
     for dark in (False, True):
         section_954.plot(tmp_path / "v.png", dark=dark)

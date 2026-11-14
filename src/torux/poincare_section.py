@@ -18,12 +18,12 @@ number of field periods from it, so a line crosses each plane once a field perio
 has not settled, or that lies on a surface and whose crossings still leave a gap along its curve wider than CLOSE_PX
 pixels of the picture plot draws (838 across), is followed on, doubling its length up to FOLLOW_CAP times, until the
 transform settles and the curve closes (_follow): a curve means a surface, separate loops mean islands.  A line on a
-surface whose curve is still open then is drawn in grey (Poincare.open).  The tracer (torux.poincare_trace) follows
-lines with a field within 1e-14 of an engine whose nodes give it to rounding down to DMIN_SHARE of the magnetic
-axis' distance from the nearest conductor: a line has left the machine where it comes nearer a conductor than that,
-turns back in phi next to a coil or leaves the box round the source.  Where the lines will take more than SAY_AFTER
-seconds the call says first about how long (_say_how_long), and again before lines are followed on.  Ctrl-C stops it
-within seconds, as a KeyboardInterrupt.
+surface whose curve is still open then (or round a chain of more than ISLANDS islands) is drawn in grey
+(Poincare.open).  The tracer (torux.poincare_trace) follows lines with a field within 1e-14 of an engine whose nodes
+give it to rounding down to DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the
+machine where it comes nearer a conductor than that, turns back in phi next to a coil or leaves the box round the
+source.  Where the lines will take more than SAY_AFTER seconds the call says first about how long (_say_how_long),
+and again before lines are followed on.  Ctrl-C stops it within seconds, as a KeyboardInterrupt.
 
 The rotational transform of a line is its mean turn about the magnetic axis per turn round the machine, signed as
 torux signs iota (VMEC's sign): the weighted Birkhoff average of its turn in each field period.  It converges fast on
@@ -54,7 +54,8 @@ EDGE_EXTRA = 2              # lines started beyond the last line that stayed, to
 IOTA_TOL = 1e-4             # the Birkhoff averages of the first half of a line with a rotational transform and of
                             # all of it agree to this, rad a field period. Near a resonance a surface's average settles
                             # slowly: QUASR 1100073's lines next to the axis, 0.1 % from 1/9 a period, differ by
-                            # 2e-5 to 6e-5 at 600 periods and by 1e-9 to 1e-6 at 4,800. Lines that wander: 4e-4 to 2e-3
+                            # 2e-5 to 6e-5 at 600 periods and by 3e-10 to 1e-7 at 4,800. Lines that wander: 2e-4 to
+                            # 2e-3, and no less at 4,800
 CHAINS = 3                  # island chains looked for, the fewest islands first
 QMAX = 12                   # islands in a chain at most (per plane)
 THIN = 1e-4                 # an elliptic point of smaller residue has islands too thin to draw: no lines round it
@@ -95,8 +96,9 @@ class Poincare:
     turns    toroidal turns each line is followed (field periods / nfp), the most for a line that leaves
     followed (L,): the field periods each line was followed: turns x nfp, up to FOLLOW_CAP times that for a line whose
              transform had not settled or whose curve had not closed, fewer for a line that left
-    open     (L,) bool: the line lies on a surface (it has a rotational transform and goes round no island chain), and
-             after all its length its crossings still leave a gap wider than CLOSE_PX along its curve: drawn in grey
+    open     (L,) bool: the line has a rotational transform that tells no chain of ISLANDS islands or fewer, and after
+             all its length its crossings still leave a gap wider than CLOSE_PX along its curve: a surface very near a
+             rational, or a finer chain. Drawn in grey
     nfp      field periods of the source
     steps, order  the tracer's steps per field period and its order
     seconds  how long it took
@@ -143,8 +145,9 @@ class Poincare:
                 ("left the machine", f"{int(self.left.sum())}")]
         n_open = int(np.sum(getattr(self, "open", ())))
         if n_open:
-            rows.append(("curves not closed", f"{n_open}, drawn in grey: on a surface by their rotational transform, "
-                                              f"and their crossings still leave a gap along its curve"))
+            rows.append(("curves not closed", f"{n_open}, drawn in grey: their crossings still leave gaps along their "
+                                              f"curve, and their rotational transform tells no chain of {ISLANDS} "
+                                              f"islands or fewer (a surface very near a rational, or a finer chain)"))
         rows.append(("time", f"{self.seconds:.1f} s"))
         from .answer import _table
         return _table(rows)
