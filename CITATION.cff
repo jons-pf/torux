@@ -7,7 +7,7 @@ authors:
   - family-names: Bogdan
     given-names: Philipp
 date-released: 2026-11-14
-version: 0.1.4
+version: 0.2.0
 url: "https://github.com/philippbogdan/torux"
 repository-code: "https://github.com/philippbogdan/torux"
 license: CC0-1.0
