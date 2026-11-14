@@ -279,6 +279,61 @@ def test_an_answer_says_when_the_budget_left_no_room_for_what_was_asked_with_it(
 
 
 # --------------------------------------------------------------------------- slow: minutes each
+def _coils_with_surfaces_to(monkeypatch, edge, family_to):
+    """A source without a request or design surfaces whose every request at a flux up to ``edge`` verifies at once
+    and every one beyond comes back undetermined at once, and whose family from the axis is verified to
+    ``family_to``: the requests the search makes, as (flux, budget) in order."""
+    import types
+    asked = []
+
+    def request(src, flux, b, o):
+        asked.append((flux, b))
+        if flux is None:
+            prof = [dict(flux=family_to * k / 4, converged=True, bn_off=1e-12) for k in (1, 2, 3, 4)]
+            return api.Result("range", b, 0.1, record=dict(range=dict(verified_lower_bound=family_to), profile=prof))
+        if flux <= edge:
+            return api.Result("surface", b, 0.1, surface=object(), iota=-0.33, record={})
+        return api.Result("undetermined", b, 0.1, record={})
+    monkeypatch.setattr(ask, "_request", request)
+    monkeypatch.setattr(ask, "size", lambda s: dict(volume=1.0, minor_radius=0.1, mean_cross_section=0.03))
+    monkeypatch.setattr(ask, "say", None)
+    monkeypatch.setattr(api, "estimate_budget", lambda src, flux: 300.0 if flux is not None else 600.0)
+    return types.SimpleNamespace(id="coils", request=None), asked
+
+
+def test_the_largest_looks_past_a_surface_verified_beyond_the_family(monkeypatch):
+    """The request beyond every flux seen comes back verified: the search asks twice as far again until a request
+    fails, then closes the gap, and never says the budget ran out while most of it is left. Nor does it ask the
+    source again for a surface it asked of the source itself."""
+    src, asked = _coils_with_surfaces_to(monkeypatch, edge=0.01, family_to=0.0018)
+    res = ask._largest(src, 1200.0, {})
+    s = res.evidence["search"]
+    fluxes = [f for f, _ in asked if f is not None]
+    assert len(fluxes) == len(set(fluxes)), fluxes
+    assert 0.0099 <= s["flux"] <= 0.01 and res.status == "surface"
+    assert not any("budget ran out" in w for w in s["words"]), s["words"]
+    assert s["beyond"]["kind"] == "undecided" and 0.01 < s["beyond"]["flux_Wb"] <= 0.0102
+    assert s["wall_s"] < 60
+
+
+def test_the_largest_says_the_budget_ran_out_only_when_it_did(monkeypatch):
+    """Nothing decided beyond the answer: 'the budget ran out first' when the budget did, and otherwise what
+    stopped the search and the seconds left."""
+    S, _ = _search(monkeypatch, budget=1000.0)
+    lo = 0.05
+    entry = dict(flux=lo, budget_s=60.0, wall_s=3.0, status="surface")
+    r = api.Result("surface", 60.0, 3.0, surface=object(), iota=0.3, record={})
+    r._ask_entry = entry
+    S.log.append(entry)
+    S.best[lo], S.size_of[lo] = r, dict(volume=1.0, minor_radius=0.1)
+    s = ask._largest_answer(S, lo, "budget").evidence["search"]
+    assert "beyond it: nothing decided, the budget ran out first" in s["words"] and s["beyond"] == dict(kind="budget")
+    s = ask._largest_answer(S, lo, "every request beyond the family verified").evidence["search"]
+    assert not any("budget ran out" in w for w in s["words"]) and s["beyond"]["kind"] == "not asked"
+    assert any(w.startswith("beyond it: nothing decided, with ") and w.endswith(
+        " s of the budget left: every request beyond the family verified") for w in s["words"]), s["words"]
+
+
 def _chain_records():
     """A chain the family met (torux.analysis's record of it) and an edge barrier's record with the closed line it
     tried, as a request of two field periods records them."""

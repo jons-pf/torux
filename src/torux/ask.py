@@ -30,6 +30,8 @@ MAX_SIZE_REQUESTS = 24
 # are this close (relative)
 GAP = 0.01
 MIN_REQUEST_S = 5.0
+# the largest: requests beyond every flux seen, each twice the last, while each comes back verified
+MAX_BEYOND = 8
 UNITS = {"minor_radius": "m", "volume": "m^3"}
 WORDS = {"minor_radius": "minor radius", "volume": "volume"}
 
@@ -636,25 +638,39 @@ def _largest(src, budget_s, opts):
                     break
 
         climb(cands)
-        if not any(c.get("no_surface_above_Wb") is not None for _, c, _ in S.certs):
+        for _ in range(MAX_BEYOND):
+            if any(c.get("no_surface_above_Wb") is not None for _, c, _ in S.certs):
+                break
             # beyond everything seen, from the axis, with half the time left (at least the solver's default): what
-            # stands past the last surface, a certificate if one can be had. The other half closes the gap below
+            # stands past the last surface, a certificate if one can be had. The other half closes the gap below.
+            # A surface verified there decides nothing about what lies past it: then twice as far again
             seen = list(S.size_of) + list(S.failed) + cands
-            if seen and S.left() > 4 * MIN_REQUEST_S:
-                f_b = 2.0 * max(seen)
-                r = S.ask(f_b, "beyond every flux seen, for what stands past the last surface", src=free,
-                          budget=max(S.default_budget(f_b), 0.5 * S.left()))
-                if r is None:
-                    raise _OutOfTime
-                if _terminal(r):
-                    raise _Terminal(r)
-                more = _family(r.record or {})
-                if f_b in S.size_of:   # (asked of the coils alone: a surface there is asked again of the source)
+            if not seen:
+                break
+            if S.left() <= 4 * MIN_REQUEST_S:
+                raise _OutOfTime
+            f_b = 2.0 * max(seen)
+            r = S.ask(f_b, "beyond every flux seen, for what stands past the last surface", src=free,
+                      budget=max(S.default_budget(f_b), 0.5 * S.left()))
+            if r is None:
+                raise _OutOfTime
+            if _terminal(r):
+                raise _Terminal(r)
+            more = _family(r.record or {})
+            if f_b in S.size_of:
+                if free is src:
+                    take(f_b)          # the source's own answer at f_b: asking it again would give the same
+                else:                  # (asked of the coils alone: a surface there is asked again of the source)
                     S.best.pop(f_b, None)
                     S.size_of.pop(f_b)
                     more.append(f_b)
-                del r
-                climb(sorted(set(more)))
+            del r
+            climb(sorted(set(more)))
+            if state["lo"] is None or state["lo"] < f_b * (1 - 1e-12):
+                break                  # no surface at f_b: what lies between is the gap's to close
+        else:
+            state["stop"] = (f"every request beyond the family verified, out to {MAX_BEYOND} doublings of the flux, "
+                             f"and the search asks no further")
         # between the largest verified flux and the smallest beyond it that failed or that a certificate rules out,
         # until they are within GAP of each other
         for _ in range(6):
@@ -666,14 +682,16 @@ def _largest(src, budget_s, opts):
             if not up or (min(up) - lo) <= GAP * lo:
                 break
             f = 0.5 * (lo + min(up))
-            if _covering(S, f) is not None or S.left() < 0.25 * S.default_budget(f):
-                break                  # (a request with a sliver of its budget decides nothing)
+            if _covering(S, f) is not None:
+                break
+            if S.left() < 0.25 * S.default_budget(f):
+                raise _OutOfTime       # (a request with a sliver of its budget decides nothing)
             probe(f, "between the largest verified flux and the least one beyond it that failed")
     except _OutOfTime:
-        pass
+        state["stop"] = "budget"
     except _Terminal as t:
         return S.finish(t.r, [], brief=True)
-    return _largest_answer(S, state["lo"])
+    return _largest_answer(S, state["lo"], state.get("stop"))
 
 
 class _OutOfTime(Exception):
@@ -686,10 +704,14 @@ class _Terminal(Exception):
         self.r = r
 
 
-def _largest_answer(S, lo):
+def _largest_answer(S, lo, stop="budget"):
+    """The answer to the largest: ``lo`` the largest verified flux (None: none), ``stop`` why the search asked no
+    more: 'budget', or words, or None when it ended with time to spare in the ordinary way."""
     from .api import Result
     words = []
     fields = dict(flux=lo, beyond=None, outward=[])
+    if lo is None and stop is None and S.left() > MIN_REQUEST_S:
+        stop = "no request verified a surface, and the search had no flux left to ask"
     if lo is None:
         words.append("found: no verified surface, by any request within the budget")
         r = Result("timeout" if S.left() <= MIN_REQUEST_S else "undetermined", S.budget, 0.0)
@@ -734,7 +756,9 @@ def _largest_answer(S, lo):
     if cut is not None:
         items = items[:cut + 1]
     fields["outward"] = [it for _, it in items]
-    fields["beyond"] = items[0][1] if items else dict(kind="budget")
+    budget_out = stop == "budget" or S.left() <= MIN_REQUEST_S
+    fields["beyond"] = items[0][1] if items else dict(kind="budget") if budget_out else dict(
+        kind="not asked", why=stop or "the search ended with nothing beyond the answer asked")
     for i, (_, it) in enumerate(items):
         label = "beyond it" if i == 0 else "then"
         if it["kind"] == "certified bound":
@@ -747,8 +771,11 @@ def _largest_answer(S, lo):
         else:
             words.append(f"{label}: at {_wb(it['flux_Wb'])} torux could not decide within {it['budget_s']:.0f} s "
                          f"({it['why']})")
-    if not items:
+    if not items and budget_out:
         words.append("beyond it: nothing decided, the budget ran out first")
+    elif not items:
+        words.append(f"beyond it: nothing decided, with {max(0.0, S.left()):.0f} s of the budget left: "
+                     f"{fields['beyond']['why']}")
     # a flux below the answer at which torux could not decide: said, since surfaces inside a surface are expected
     under = sorted((f, e) for f, e in S.failed.items() if lo is not None and f < lo and _covering(S, f) is None)
     fields["undecided_below"] = [dict(flux_Wb=f, budget_s=e["budget_s"], why=e.get("why")) for f, e in under]
@@ -767,6 +794,7 @@ def _largest_answer(S, lo):
             if _covers(c, lo):
                 words.append(f"disagreement: the certificate of the request at {_wb(f)} rules out the flux of this "
                              "verified surface: one of the two is wrong")
+    fields["stop"] = "budget" if budget_out else stop
     return S.finish(r, words, **fields)
 
 
