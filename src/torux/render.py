@@ -202,8 +202,9 @@ def _source(answer):
     for s in (getattr(answer, "source", None), getattr(getattr(answer, "_engine", None), "source", None)):
         if isinstance(s, Source):
             return s
-    raise ValueError("this answer does not hold its source, so its coils cannot be drawn: render the answer "
-                     "torux.solve returns (one read from a file, or settled by a proof, holds none)")
+    raise ValueError("this answer does not hold its source, so its coils cannot be drawn: one read from a file "
+                     "holds none (solve again to draw it), and nor does one that ended before the field was built (an "
+                     "error, or the verdict on a source that is not a stellarator)")
 
 
 def content(answer, log=None):
