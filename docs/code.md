@@ -1,6 +1,6 @@
 # Where things are
 
-`src/torux`, about 48,000 lines of Python. Each module says in its own docstring what it does and why it is right. This is the map, and [the method](../method/README.md) is the explanation.
+`src/torux`, about 55,000 lines of Python. Each module says in its own docstring what it does and why it is right. This is the map, and [the method](../method/README.md) is the explanation.
 
 | | |
 |---|---|
@@ -12,6 +12,7 @@
 | `load.py`, `sources.py` | `load`: a source from files, a QUASR number, a live SIMSOPT or DESC object |
 | `plot.py`, `boozer.py` | the picture, and the Boozer spectrum and quasi-symmetry |
 | `render.py`, `pathtrace.py` | `answer.render`: the answer as one path-traced picture in the README's look, cut open or closed |
+| `poincare_section.py`, `poincare_trace.py` | `poincare`: field lines through planes of constant toroidal angle, and their tracer |
 | `cli.py` | the `torux` command |
 | `api.py` | the solver's one call per request: a stated budget, a truthful outcome |
 | `source.py` | what a source is: filaments, polygons, segments, dipoles, rings, conductors |

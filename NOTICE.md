@@ -45,6 +45,8 @@ The pictures are torux's own renderings. The coils and magnets drawn in them are
 
 `visuals/render-*`: the coils of QUASR design 954, from QUASR v4 (as above, MIT), as `torux.solve("examples/quasr_0000954.json").render` draws them, cut and closed.
 
+`visuals/poincare-*`: the field lines of the coils of Wendelstein 7-X, from the coil set shipped with [simsopt](https://github.com/hiddenSymmetries/simsopt) 1.11 (MIT), and of QUASR design 1100073, from QUASR v4 (as above, MIT), as `torux.poincare` and `answer.poincare` draw them.
+
 `method/figures/`: torux's surfaces and certificates for the coils of HSX and of QUASR designs 954, 219457 and 1100073, the bundled inputs above (MIT), lettered in the Computer Modern faces that ship with [matplotlib](https://matplotlib.org), as outlines.
 
 GPL-3.0: [gnu.org/licenses/gpl-3.0](https://www.gnu.org/licenses/gpl-3.0.html). LGPL-3.0: [gnu.org/licenses/lgpl-3.0](https://www.gnu.org/licenses/lgpl-3.0.html). CC BY 4.0: [creativecommons.org/licenses/by/4.0](https://creativecommons.org/licenses/by/4.0/). Every picture is a new rendering of the geometry in the files named. Of those files, only the ones listed under bundled inputs are redistributed here.

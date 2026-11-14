@@ -9,8 +9,8 @@
                [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
     torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
                  [--nfp N] [--kind K] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
-    torux poincare SOURCE [FILE] [--planes DEG [DEG ...]] [--lines N] [--turns N] [--start R,Z ...] [--dark]
-                   [--nfp N] [--coils NAME] [--currents saved|dofs]
+    torux poincare SOURCE [SOURCE ...] [FILE] [--planes DEG [DEG ...]] [--lines N] [--turns N] [--start R,Z]
+                   [--dark] [--nfp N] [--kind K] [--coils NAME] [--currents saved|dofs]
     torux version
 
 solve prints the answer on stdout and, with --save, writes it: *.json (everything), input.<name> (VMEC input, cut
@@ -18,14 +18,16 @@ to --mpol and --ntor when they are given), *.vtk (the surface with |B|). --save 
 search (a size, the largest) says on stderr what it asks, how long it may take and each request as it ends.  The exit
 code is 0 for a verified surface, a certified or proved no-surface or a verified range, 2 for anything undetermined,
 1 for an error, a command line that cannot be read included.  render solves as solve does, prints the answer, and
-writes its picture (answer.render), with the same exit code, or 1 where no picture could be written.  Each subcommand is a pair of functions in COMMANDS.
+writes its picture (answer.render), with the same exit code, or 1 where no picture could be written.
 --coils and --currents are torux.load's which= and currents= for a SIMSOPT JSON source: which coil set of a file
 holding several (with several files, --coils once per file, - for one that needs none), and which of a Current
 object's two values where they differ.  In many, given once they apply to every design, and given once per SOURCE,
 in order, each to its own design, - for one that needs none.  poincare prints its lines (where each starts, its
 rotational transform, whether it left) and with FILE draws them, and where the lines take more than half a minute
-says on stderr about how long first.  check's --which is the surface's, and
---surface-currents and --mismatched-coils are check's surface_currents= and mismatched_coils=True.
+says on stderr about how long first.  --start is given once per line.  check's --which is the surface's, and
+--surface-currents and --mismatched-coils are check's surface_currents= and mismatched_coils=True.  render and
+poincare check that FILE can be written before any work, and Ctrl-C ends them in one line, with code 130.  Each
+subcommand is a pair of functions in COMMANDS.
 """
 from __future__ import annotations
 
