@@ -1103,7 +1103,8 @@ def certify_request(eng, cont, brackets, request, tol=3e-15, deadline=None, verb
         T2r = refine_to_limit(cont, T2, T2.flux, target=tol, deadline=deadline, fixed_iota=None)
         best = None
         for O in ch.O:
-            w = (2 * ch.half_width_est / ch.q) if np.isfinite(ch.half_width_est) else None
+            sc = ch.info.get("width_scale", np.nan)        # (q half widths: the scale this width was set on)
+            w = (2 * sc / ch.q) if np.isfinite(sc) else None
             it, _ = island_tori(eng, O, width_est=w, deadline=deadline)
             good = [t for t in it if t.converged and np.isfinite(t.bn_off) and t.bn_off < 1e-9]
             if good:

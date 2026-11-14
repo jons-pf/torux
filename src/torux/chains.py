@@ -5,9 +5,14 @@ p/q (reduced, p signed like iota) has its lines close after q field periods with
 turns, resonant harmonic (m, n) = (q, p) of the torus basis cos(m theta - n nfp phi).
 
 Pendulum estimate of the chain's half width in enclosed flux Phi (Wb), from the O line's
-residue R_O and the shear diota/dPhi at the resonance (standard-map normal form of the
-q-period map, twist T = 2 pi q drho/dJ, J = Phi / 2 pi):
-    dPhi_half = 2 nfp sqrt(R_O) / (pi q |d iota / d Phi|)
+residue R_O and the shear diota/dPhi at the resonance.  The resonant harmonic cos(q theta - p nfp phi)
+makes a pendulum in psi = q theta - p nfp phi with J = Phi / 2 pi: psi' = q iota_J dJ,
+dJ' = q eps sin psi (iota_J = d iota / dJ, ' = d / d phi).  Its separatrix half width is
+dJ = 2 sqrt(eps / iota_J), and over the line's q field periods (phi = 2 pi q / nfp) the O line turns
+by q sqrt(iota_J eps) 2 pi q / nfp = 2 sqrt(R_O) (R_O = sin^2 of half that angle, small).  So
+    dPhi_half = 2 nfp sqrt(R_O) / (pi q^2 |d iota / d Phi|)
+(the standard map of the q-period map in the angle q theta, twist 2 pi q^2 drho/dJ).  It assumes the
+shear constant across the chain and R_O small: an estimate, not a bound.
 """
 from __future__ import annotations
 
@@ -123,12 +128,22 @@ def analyse_chain(engine, tori, p, q, verbose=False, deadline=None):
         # linear extrapolation from the last two tori in the direction of the resonance
         j = k if 0 < k < len(tori) else len(tori) - 1
         ch.shear = float(dI[j])
+        ch.info["shear_at"] = dict(index=int(j), n_tori=len(tori), flux=float(fl[j]), iota=float(io[j]))
         if ch.shear != 0:
             ch.flux_r = float(fl[j] + (iota_r - io[j]) / ch.shear)
     if ch.O and np.isfinite(ch.shear) and ch.shear != 0:
         RO = max(l.residue for l in ch.O)
-        ch.half_width_est = float(2 * nfp * math.sqrt(RO) / (math.pi * q * abs(ch.shear)))
+        ch.half_width_est = pendulum_half_width(RO, q, nfp, ch.shear)
+        # q times the half width: the scale the jump's ladder and the island tori's width are set on, their
+        # numbers as they were before the estimate was divided by q
+        ch.info["width_scale"] = float(2 * nfp * math.sqrt(RO) / (math.pi * q * abs(ch.shear)))
     return ch
+
+
+def pendulum_half_width(residue, q, nfp, shear):
+    """The pendulum estimate (module docstring) of a chain's half width in flux (Wb) from its O line's residue, its
+    period q, the field periods nfp and the shear d iota / d Phi (1/Wb)."""
+    return float(2 * nfp * math.sqrt(residue) / (math.pi * q * q * abs(shear)))
 
 
 def noble_offset(iota_r, nfp, q, dist):
@@ -150,8 +165,10 @@ def jump_over(cont, tori, chain: Chain, direction, max_tries=6, verbose=False, a
     # strongly sheared chains)
     io = max(abs(last.iota), 1e-2)
     cands = list(io * np.array([1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2]))
-    if np.isfinite(chain.half_width_est) and np.isfinite(chain.shear) and chain.shear != 0:
-        w = chain.half_width_est * abs(chain.shear)
+    scale = chain.info.get("width_scale", np.nan)
+    if np.isfinite(scale) and np.isfinite(chain.shear) and chain.shear != 0:
+        # (on q half widths in flux, the scale these three were set on: analyse_chain's width_scale)
+        w = scale * abs(chain.shear)
         cands += [1.25 * w, 1.5 * w, 2.0 * w]
     cands = sorted(set(float(c) for c in cands))
     # distances well inside the chain are futile: the family itself stopped |iota_r - iota_last| short of the
