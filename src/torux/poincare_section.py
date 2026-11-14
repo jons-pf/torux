@@ -422,8 +422,8 @@ def _planes(planes, period, phi_ref):
         raise ValueError("planes= takes the cylindrical angles of one or more planes, in radians")
     if np.any(np.abs(p) > 2 * np.pi + 1e-9):
         v = float(p[np.argmax(np.abs(p) > 2 * np.pi + 1e-9)])
-        raise ValueError(f"planes= takes angles in radians, within a turn (-2π to 2π): {v:g} is "
-                         f"{math.degrees(v):g}°. For {v:g}°, give math.radians({v:g})")
+        raise ValueError(f"planes= takes angles in radians, within one turn (-2π to 2π): {v:g} rad is "
+                         f"{math.degrees(v):g}°. Where {v:g} is meant in degrees, give math.radians({v:g})")
     rel = np.mod(p - p[0], period)
     rel = np.where(np.isclose(rel, period, rtol=0, atol=1e-12), 0.0, rel)
     if len(np.unique(np.round(rel, 12))) != len(p):
