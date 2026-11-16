@@ -47,27 +47,35 @@ LABELS = 23                      # the column of words every printed block of to
 
 
 def solve(source, flux=None, *, minor_radius=None, volume=None, largest=False, budget_s=None, tol=3e-15, verify=True,
-          trace_lines=0, gradients=False) -> Answer:
+          trace_lines=0, gradients=False, widths_s=None, widths_jobs=None) -> Answer:
     """The flux surface of ``source`` asked for by one of ``flux`` (full toroidal flux, Wb), ``minor_radius`` (m),
     ``volume`` (m^3) or ``largest``, verified, or the certificate that none exists, or a truthful 'undetermined'.
     With none of the four: the source's own request, or, when it carries none, its largest surface.  ``source``:
-    anything torux.load reads, a torux.Source or a torux.Request. ``budget_s``: seconds for the whole question."""
+    anything torux.load reads, a torux.Source or a torux.Request. ``budget_s``: seconds for the whole question.
+    ``widths_s`` (with the largest): seconds of their own for closing in on each island chain of the answer with
+    verified surfaces either side, its bracket in answer.evidence['chains'] (torux.widths); ``widths_jobs`` the
+    requests it runs at once (default: the cores over the threads of a solve)."""
     from . import ask
     from .source import Source
     if isinstance(source, Request):
         if flux is not None or minor_radius is not None or volume is not None or largest:
             raise ValueError("a torux.Request carries its own flux: give flux, minor_radius, volume or largest with "
                              "the source instead")
+        if widths_s is not None or widths_jobs is not None:
+            raise ValueError("widths_s closes in on the chains of the largest surface's answer: give largest=True "
+                             "with the source instead of a torux.Request")
         req = source
         if not isinstance(req.source, Source):
             req = dataclasses.replace(req, source=_load(req.source))
         res = _api_solve(req)
     else:
         ask.one_question(flux, minor_radius, volume, largest)
+        ask.widths_question(widths_s, widths_jobs, flux, minor_radius, volume, largest)
         src = source if isinstance(source, Source) else _load(source)
         req = Request(src, flux, budget_s, tol, verify, trace_lines, gradients)
         res = ask.solve(src, flux, minor_radius=minor_radius, volume=volume, largest=largest, budget_s=budget_s,
-                        tol=tol, verify=verify, trace_lines=trace_lines, gradients=gradients)
+                        tol=tol, verify=verify, trace_lines=trace_lines, gradients=gradients,
+                        **({} if widths_s is None else dict(widths_s=widths_s, widths_jobs=widths_jobs)))
     search = (res.evidence or {}).get("search")
     if search:              # asked by size or for the largest: no flux was asked (evidence['search'] has the fluxes)
         return Answer._of(res, None)

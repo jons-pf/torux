@@ -62,11 +62,14 @@ def size(surface):
 
 # --------------------------------------------------------------------------- the one entry point
 def solve(source, flux=None, *, minor_radius=None, volume=None, largest=False, budget_s=None, tol=3e-15,
-          verify=True, trace_lines=0, gradients=False):
+          verify=True, trace_lines=0, gradients=False, widths_s=None, widths_jobs=None):
     """The flux surface of ``source`` asked for by one of ``flux`` (Wb), ``minor_radius`` (m), ``volume`` (m^3)
-    or ``largest``. With none of them the source's own request, else the largest surface torux can verify."""
+    or ``largest``. With none of them the source's own request, else the largest surface torux can verify.
+    widths_s (largest only): seconds of its own for closing in on every chain of the answer with verified surfaces
+    (torux.widths), widths_jobs requests at once (default: the cores over the threads of a solve)."""
     from .api import Request
     one_question(flux, minor_radius, volume, largest)
+    widths = widths_question(widths_s, widths_jobs, flux, minor_radius, volume, largest)
     opts = dict(tol=tol, verify=verify, trace_lines=trace_lines, gradients=gradients)
     given = flux is not None or minor_radius is not None or volume is not None or largest
     if isinstance(source, Request):
@@ -83,8 +86,27 @@ def solve(source, flux=None, *, minor_radius=None, volume=None, largest=False, b
     src = _source(source)
     own = (src.request or {}).get("flux_Wb")
     if largest or not own:
-        return _largest(src, budget_s, opts)
+        return _largest(src, budget_s, opts, widths)
+    if widths is not None:
+        raise ValueError("widths_s closes in on the chains of the largest surface's answer: give largest=True with it")
     return _request(src, None, budget_s, opts)
+
+
+def widths_question(widths_s=None, widths_jobs=None, flux=None, minor_radius=None, volume=None, largest=False):
+    """(widths_s, widths_jobs) when the chains are to be closed in on (torux.widths), else None; ValueError for a
+    value that cannot be asked, or with a question other than the largest."""
+    if widths_s is None:
+        if widths_jobs is not None:
+            raise ValueError("widths_jobs is the requests at once of widths_s: give widths_s with it")
+        return None
+    if not _number(widths_s) or not widths_s > 0:
+        raise ValueError(f"widths_s={widths_s!r}: give the seconds for closing in on the chains as a positive number")
+    if widths_jobs is not None and (isinstance(widths_jobs, bool) or int(widths_jobs) != widths_jobs
+                                    or widths_jobs < 1):
+        raise ValueError(f"widths_jobs={widths_jobs!r}: give a whole number of requests at once, at least 1")
+    if flux is not None or minor_radius is not None or volume is not None:
+        raise ValueError("widths_s closes in on the chains of the largest surface's answer: give largest=True with it")
+    return float(widths_s), None if widths_jobs is None else int(widths_jobs)
 
 
 def _number(v):
@@ -160,6 +182,7 @@ class _Search:
         self.missed = None        # what was asked with the answer and the budget left no room for, in words
         self.crossed = None       # (verified tori, engine, axis) of the crossed stage, for placing every chain
         self.after = 0.0          # seconds the crossed stage ran past the deadline
+        self.widths = None        # (brackets by chain, summary) of the closing in on the chains (torux.widths)
 
     def left(self):
         return self.deadline - time.time()
@@ -243,11 +266,18 @@ class _Search:
                 pass
         if chains and not brief:
             words = list(words) + _chain_words(chains)
+        if self.widths is not None:
+            from .widths import attach, words as widths_words
+            attach(chains, self.widths[0])
+            if not brief:
+                words = list(words) + [widths_words(self.widths[1])]
         r.evidence["search"] = dict(question=self.question, asked=self.asked, budget_s=self.budget,
                                     budget_stated=self.stated, wall_s=time.time() - self.t0, requests=self.log,
                                     words=[f"asked: {self.what}"] + ([] if brief else list(words) + [
                                         req_words, f"budget: {budget_words}"]),
                                     **fields)
+        if self.widths is not None:
+            r.evidence["search"]["widths"] = self.widths[1]
         # every chain any request of the search identified, once each (per request in requests[i]['chains'])
         r.evidence["search"]["chains"] = chains
         r.evidence["chains"] = chains
@@ -690,11 +720,13 @@ def _size_not_held(S, which, target, F_need, f_asked, cert, r):
 
 
 # --------------------------------------------------------------------------- the largest
-def _largest(src, budget_s, opts):
+def _largest(src, budget_s, opts, widths=None):
     """The largest surface torux can verify for ``src`` by any request it can make within the budget: its own
     request, the family from the magnetic axis (the no-flux request), direct requests at the fluxes that family
-    reached and between them, and a request beyond them all for a certificate of what lies past the last surface."""
+    reached and between them, and a request beyond them all for a certificate of what lies past the last surface.
+    widths: (seconds, requests at once) for closing in on the answer's chains after it (torux.widths), or None."""
     S = _Search(src, "largest", None, budget_s, opts)
+    S.widths_asked = widths
     state = dict(lo=None)
 
     def take(f):
@@ -916,7 +948,25 @@ def _largest_answer(S, lo, stop="budget"):
         fields["no_surface_above_Wb"] = ups[0]
     if lo is not None:
         _crossed_stage(S, r)
+        if getattr(S, "widths_asked", None) is not None:
+            _widths_stage(S, r)
     return S.finish(r, words, **fields)
+
+
+def _widths_stage(S, r):
+    """The answer's chains closed in on with verified surfaces (torux.widths), in seconds of their own."""
+    from . import widths as W
+    secs, jobs = S.widths_asked
+    t = time.time()
+    _say(f"closing in on the answer's chains with verified surfaces: up to {secs:.0f} s")
+    try:
+        S.widths = W.stage(S, r, secs, jobs)
+    except Exception as ex:  # noqa: BLE001  (the closing in costs its brackets, never the answer)
+        S.widths = ({}, dict(error=repr(ex), budget_s=secs, wall_s=round(time.time() - t, 1)))
+        return
+    s = S.widths[1]
+    _say(f"closed in on {s['chains']} chain{'s' if s['chains'] != 1 else ''} by {s['requests']} requests in "
+         f"{s['wall_s']:.0f} s")
 
 
 def _crossed_stage(S, r):

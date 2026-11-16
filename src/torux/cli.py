@@ -94,6 +94,7 @@ def _solve_args(sub):
                    help="a coil or magnet file, or quasr:NUMBER. Several files whose parts add up are one source")
     _question_args(s)
     s.add_argument("--gradients", action="store_true", help="also the gradients of iota in every source parameter")
+    widths_args(s)
     s.add_argument("--no-verify", action="store_true", help="skip the independent verification: the answer then rests "
                                                             "on the solver's own checks")
     s.add_argument("--trace-lines", type=int, default=0, metavar="N", help="also follow this many field lines with "
@@ -110,6 +111,15 @@ def _solve_args(sub):
     from .check import add_source_choices
     add_source_choices(s)
     s.add_argument("--out", help=argparse.SUPPRESS)
+
+
+def widths_args(s):
+    """--widths and --widths-jobs (torux.widths), on solve and many."""
+    s.add_argument("--widths", type=float, metavar="S", help="with --largest: close in on every island chain of the "
+                                                             "answer with verified surfaces either side, in S seconds "
+                                                             "of its own (each chain's bracket)")
+    s.add_argument("--widths-jobs", type=int, metavar="N", help="requests the closing in runs at once (default: the "
+                                                                "cores over TORUX_THREADS)")
 
 
 def _say(text):
@@ -175,7 +185,8 @@ def _solve(a):
         if a.plot:
             from .plot import check_path
             check_path(a.plot)
-        res = _ask(a, verify=not a.no_verify, trace_lines=a.trace_lines, gradients=a.gradients)
+        res = _ask(a, verify=not a.no_verify, trace_lines=a.trace_lines, gradients=a.gradients,
+                   **({} if a.widths is None else dict(widths_s=a.widths, widths_jobs=a.widths_jobs)))
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1

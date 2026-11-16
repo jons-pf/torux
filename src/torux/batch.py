@@ -41,6 +41,8 @@ COLUMNS_SIZES = COLUMNS_QUASR + ("minor_radius_m", "volume_m3")
 COLUMNS_ASKED = COLUMNS_SIZES + ("asked",)
 # and for a certificate what it rests on: its construction and closed lines (torux.chainlist.provenance), JSON
 COLUMNS = COLUMNS_ASKED + ("certificate_construction", "certificate_lines")
+# a table of a run that asked widths_s: and every chain's bracket by verified surfaces (torux.widths.table_cell), JSON
+COLUMNS_WIDTHS = COLUMNS + ("chain_brackets",)
 
 # a stated budget is a promise up to one last step: past twice it, and five minutes more, the process is stopped
 _OVERRUN = (2.0, 300.0)
@@ -51,7 +53,8 @@ _WORKER = "import sys; from torux.batch import _worker_main; _worker_main(sys.ar
 
 
 def many(sources, flux=None, *, minor_radius=None, volume=None, largest=False, jobs=None, table=None, save=None,
-         budget_s=None, tol=3e-15, verify=True, gradients=False, which=None, currents=None):
+         budget_s=None, tol=3e-15, verify=True, gradients=False, which=None, currents=None, widths_s=None,
+         widths_jobs=None):
     """Solve many sources at once, each in its own process, ``jobs`` at a time, and return the answers in the
     order given.
 
@@ -68,10 +71,15 @@ def many(sources, flux=None, *, minor_radius=None, volume=None, largest=False, j
               torux.load's: the coil set of a SIMSOPT file holding several, and which of a Current object's two
               values to take where they differ. One value applies to every design. A list gives one entry per
               source, in order, None for one that needs none
+    widths_s, widths_jobs
+              with the largest: seconds of their own, for each design, for closing in on its chains with verified
+              surfaces (torux.widths), and the requests each design runs at once (default: the cores left to each
+              design). The table's chain_brackets holds the brackets
     The rest are torux.solve's.  A design that fails is an answer with status 'error' and the reason.  A design
     already in the table comes back as the answer saved for it in ``save`` when that folder holds it, else None."""
     return _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, None,
-                dict(minor_radius=minor_radius, volume=volume, largest=largest), dict(which=which, currents=currents))
+                dict(minor_radius=minor_radius, volume=volume, largest=largest), dict(which=which, currents=currents),
+                widths=(widths_s, widths_jobs))
 
 
 # --------------------------------------------------------------------------- the batch
@@ -211,9 +219,10 @@ def _threads():
 
 
 def _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, report, size=None, choices=None,
-         said=None):
-    from .ask import one_question
+         said=None, widths=(None, None)):
+    from .ask import one_question, widths_question
     size = {**dict(minor_radius=None, volume=None, largest=False), **(size or {})}
+    widths_question(widths[0], widths[1], flux if flux is None or isinstance(flux, numbers.Real) else 1.0, **size)
     one_question(flux if flux is None or isinstance(flux, numbers.Real) else None, **size)
     if flux is not None and not isinstance(flux, numbers.Real):
         for f in flux:
@@ -256,7 +265,7 @@ def _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, rep
     if save is not None:
         os.makedirs(save, exist_ok=True)
     asked = _asked(flux, size)
-    tab = _Table(table, items, asked) if table is not None else None
+    tab = _Table(table, items, asked, widths=widths[0] is not None) if table is not None else None
     try:
         if tab is not None:
             for it in items:
@@ -268,6 +277,10 @@ def _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, rep
         args = dict(budget_s=budget_s, tol=tol, verify=verify, gradients=gradients, **size)
         todo = [it for it in items if it.answer is None and not it.skip]
         at_once = min(jobs, len(todo))
+        if widths[0] is not None:
+            # each design's closing in runs its own requests: by default the cores left to it
+            args["widths_s"] = float(widths[0])
+            args["widths_jobs"] = widths[1] if widths[1] is not None else max(1, (cores // threads) // max(1, at_once))
         if report is not None and todo:
             report.starting(len(todo), at_once)
         shared = at_once * threads > cores
@@ -543,6 +556,10 @@ def _work(job):
                                    "volume" if job.get("volume") is not None else "largest")
         else:
             budget = estimate_budget(src, request)
+        widths = {} if job.get("widths_s") is None else dict(widths_s=job["widths_s"],
+                                                              widths_jobs=job.get("widths_jobs"))
+        if widths:
+            budget += float(job["widths_s"])        # the closing in on the chains has seconds of its own
         if job.get("budget_file"):
             with open(job["budget_file"], "w") as fh:
                 fh.write(repr(budget))
@@ -550,7 +567,7 @@ def _work(job):
         faulthandler.dump_traceback_later(over[0] * budget + over[1], exit=True)
         res = _solve(src, job["flux"], minor_radius=job.get("minor_radius"), volume=job.get("volume"),
                      largest=bool(job.get("largest")), budget_s=job["budget_s"], tol=job["tol"],
-                     verify=job["verify"], gradients=job["gradients"])
+                     verify=job["verify"], gradients=job["gradients"], **widths)
         faulthandler.cancel_dump_traceback_later()
     except Exception as e:  # noqa: BLE001
         res = _error_answer(f"{type(e).__name__}: {e}", time.time() - t0, budget or job["budget_s"])
@@ -606,6 +623,9 @@ def _row(res, src, request, name=None, quasr=None):
         check = ind.get("wall") if isinstance(ind, dict) else None
         row["check_s"] = check
         row["solve_s"] = res.wall_s - (check or 0.0)
+    if (ev.get("search") or {}).get("widths") is not None:
+        from .widths import table_cell
+        row["chain_brackets"] = table_cell(ev.get("chains"))
     if st == "no_surface":
         c = ev.get("certificate") or {}
         p = ev.get("proof") or {}
@@ -635,11 +655,12 @@ class _Table:
     """A CSV table written a row at a time, continued when it exists: a design whose row says 'error' is tried
     again, its old row taken out first, so that no design ever has two rows."""
 
-    def __init__(self, path, items, asked=None):
+    def __init__(self, path, items, asked=None, widths=False):
         path = os.fspath(path)
         if not path.lower().endswith(".csv"):
             raise ValueError(f"{path}: the table is CSV, written a row at a time: give a name ending in .csv")
-        self.path, self.done, self.retried, self.cols = path, set(), set(), COLUMNS
+        self.path, self.done, self.retried = path, set(), set()
+        self.cols = COLUMNS_WIDTHS if widths else COLUMNS
         fresh = not os.path.exists(path) or os.path.getsize(path) == 0
         if not fresh:
             with open(path, "rb+") as fh:
@@ -653,7 +674,7 @@ class _Table:
                 rows = [r for r in rd if r]
             if head is None:
                 fresh = True
-            elif tuple(head) not in (COLUMNS, COLUMNS_ASKED, COLUMNS_SIZES, COLUMNS_QUASR):
+            elif tuple(head) not in (COLUMNS_WIDTHS, COLUMNS, COLUMNS_ASKED, COLUMNS_SIZES, COLUMNS_QUASR):
                 raise ValueError(f"{path} is not a table torux.many wrote (its columns differ): give another "
                                  f"name, or move it away")
             else:
@@ -773,6 +794,8 @@ def add_parser(sub):
     m.add_argument("--jobs", type=int, metavar="N", help="designs at once (default: the cores divided by "
                                                          "TORUX_THREADS)")
     m.add_argument("--save", metavar="DIR", help="a folder where each answer is also written as JSON")
+    from .cli import widths_args
+    widths_args(m)
     from .check import add_source_choices
     add_source_choices(m, many=True)
     return m
@@ -822,7 +845,8 @@ def main(a, out=None):
     try:
         choices, said = cli_choices(a)
         _run(a.files, a.flux, a.jobs, a.table, a.save, a.budget, 3e-15, True, False, rep,
-             dict(minor_radius=a.minor_radius, volume=a.volume, largest=a.largest), choices, said)
+             dict(minor_radius=a.minor_radius, volume=a.volume, largest=a.largest), choices, said,
+             widths=(a.widths, a.widths_jobs))
     except KeyboardInterrupt:
         print("stopped: every design not in the table yet is solved when the same command runs again",
               file=sys.stderr)
