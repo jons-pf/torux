@@ -337,3 +337,68 @@ def merge(lists):
         out.append(e)
     out.sort(key=lambda c: (c.get("flux_Wb") if c.get("flux_Wb") is not None else np.inf, c["q"]))
     return out
+
+
+def _pts(points):
+    try:
+        P = np.asarray(points, float).reshape(-1, 2)
+    except (TypeError, ValueError):
+        return None
+    return [[float(v) for v in pt] for pt in P] if len(P) else None
+
+
+def _cert_line(p, q, residue, points, plane_phi):
+    out = dict(p=_int(p), q=_int(q), residue=_num(residue), plane_phi=float(plane_phi or 0.0))
+    out["crossings"] = _pts(points)
+    return out
+
+
+def provenance(c):
+    """What a certificate record (one that holds: ok) rests on, for a reader with a tracer of their own: dict(
+    construction, the theorem's name in docs/verification.md's words; lines, the closed field lines it is built on,
+    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane; interval_Wb or
+    bound_Wb). None for a record that does not hold. A lost ring rests on no closed line (lines [])."""
+    if not isinstance(c, dict) or not c.get("ok"):
+        return None
+    kind = str(c.get("kind") or "")
+    ch = c.get("chain")
+    p, q = (ch.get("p"), ch.get("q")) if isinstance(ch, dict) else (tuple(ch) if isinstance(ch, (list, tuple))
+                                                                        and len(ch) == 2 else (None, None))
+    out = dict(construction=kind, lines=[])
+    if kind.startswith("island_band_manifold_pairs"):
+        out["construction"] = "manifold island band, from pairs of hyperbolic orbits"
+        out["lines"] = [_cert_line(p, q, o.get("residue"), o.get("points"), c.get("phi_s"))
+                        for o in c.get("X_orbits") or [] if isinstance(o, dict)]
+    elif kind.startswith("island_band_manifold"):
+        out["construction"] = "manifold island band"
+        for key in ("X_line", "O_line"):
+            ln = c.get(key)
+            if isinstance(ln, dict):
+                out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), c.get("phi_s")),
+                                         role=key[0]))
+    elif kind == "island_band":
+        out["construction"] = "island band from island tori"
+        ln = c.get("O_line")
+        if isinstance(ln, dict):
+            out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), ln.get("plane_phi")),
+                                     role="O"))
+    elif kind.startswith(("edge", "manifold_band")):
+        if c.get("certificate") == "lost_ring":
+            out["construction"] = "lost ring"
+        else:
+            out["construction"] = "edge barrier" if kind.startswith("edge") else "manifold band"
+            orb = c.get("orbit")
+            if isinstance(orb, dict):
+                out["lines"].append(dict(_cert_line(orb.get("p"), orb.get("q"), orb.get("residue"), orb.get("points"),
+                                                    c.get("plane_phi")), role="X"))
+            else:
+                for k in ("edge_barrier", "survivor"):
+                    sub = provenance(c.get(k))
+                    if sub is not None:
+                        return dict(sub, **{k_: v for k_, v in out.items() if k_ not in sub})
+    iv = c.get("interval")
+    if isinstance(iv, (list, tuple)) and len(iv) == 2 and all(_num(v) is not None for v in iv):
+        out["interval_Wb"] = sorted(abs(_num(v)) for v in iv)
+    if _num(c.get("F_up")) is not None:
+        out["bound_Wb"] = abs(_num(c["F_up"]))
+    return out

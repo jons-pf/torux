@@ -20,6 +20,7 @@ stops itself.
 from __future__ import annotations
 
 import csv
+import json
 import math
 import numbers
 import os
@@ -37,7 +38,9 @@ COLUMNS_QUASR = ("source", "id", "nfp", "flux_Wb", "outcome", "note", "iota", "M
 # and the size of each verified surface, which a scan by size or for the largest is read for
 COLUMNS_SIZES = COLUMNS_QUASR + ("minor_radius_m", "volume_m3")
 # and the question the row answers: a table holds the answers to one question
-COLUMNS = COLUMNS_SIZES + ("asked",)
+COLUMNS_ASKED = COLUMNS_SIZES + ("asked",)
+# and for a certificate what it rests on: its construction and closed lines (torux.chainlist.provenance), JSON
+COLUMNS = COLUMNS_ASKED + ("certificate_construction", "certificate_lines")
 
 # a stated budget is a promise up to one last step: past twice it, and five minutes more, the process is stopped
 _OVERRUN = (2.0, 300.0)
@@ -606,6 +609,14 @@ def _row(res, src, request, name=None, quasr=None):
     if st == "no_surface":
         c = ev.get("certificate") or {}
         p = ev.get("proof") or {}
+        try:
+            from .chainlist import provenance
+            pv = provenance(c)
+        except Exception:  # noqa: BLE001
+            pv = None
+        if pv is not None:
+            row["certificate_construction"] = pv["construction"]
+            row["certificate_lines"] = json.dumps(pv["lines"])
         if c:
             kind = str(c.get("kind", "")).replace("_manifold", "").replace("_pairs", "")
             row["certificate"] = kind or None
@@ -642,7 +653,7 @@ class _Table:
                 rows = [r for r in rd if r]
             if head is None:
                 fresh = True
-            elif tuple(head) not in (COLUMNS, COLUMNS_SIZES, COLUMNS_QUASR):
+            elif tuple(head) not in (COLUMNS, COLUMNS_ASKED, COLUMNS_SIZES, COLUMNS_QUASR):
                 raise ValueError(f"{path} is not a table torux.many wrote (its columns differ): give another "
                                  f"name, or move it away")
             else:

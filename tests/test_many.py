@@ -96,10 +96,12 @@ def test_many_is_the_single_solves_bit_for_bit(batch_run, solved_954):
 def test_the_table_has_the_documented_columns_and_values(batch_run, solved_954):
     head, rows = _rows(batch_run["table"])
     # the source, the columns of results/quasr.parquet, the size of each verified surface, and the question asked
-    assert head == ["source"] + _documented_columns() + ["minor_radius_m", "volume_m3", "asked"]
+    assert head == ["source"] + _documented_columns() + ["minor_radius_m", "volume_m3", "asked",
+                                                         "certificate_construction", "certificate_lines"]
     with open(os.path.join(REPO, "results", "README.md"), encoding="utf-8") as fh:
         page = fh.read()
     assert "then `minor_radius_m` and `volume_m3` of the surface, then `asked`, the question the table answers" in page
+    assert "then for a certificate `certificate_construction`" in page and "`certificate_lines`" in page
     assert {r["asked"] for r in rows} == {"flux"}
     by = {r["source"]: r for r in rows}
     assert len(rows) == 3 and set(by) == {os.path.normpath(s) for s in batch_run["sources"]}
@@ -368,7 +370,9 @@ def test_an_error_row_is_tried_again_and_replaced(tmp_path, capsys):
     head, rows = _rows(table)
     assert len(rows) == 1 and rows[0]["outcome"] == "no_surface"
     old = tmp_path / "old.csv"
-    assert batch.COLUMNS == batch.COLUMNS_SIZES + ("asked",) and batch.COLUMNS_SIZES[:18] == batch.COLUMNS_QUASR
+    assert batch.COLUMNS == batch.COLUMNS_ASKED + ("certificate_construction", "certificate_lines")
+    assert batch.COLUMNS_ASKED == batch.COLUMNS_SIZES + ("asked",) and batch.COLUMNS_SIZES[:18] == batch.COLUMNS_QUASR
+    assert head[-2:] == ["certificate_construction", "certificate_lines"]
     old.write_text(",".join(batch.COLUMNS_QUASR) + "\n")
     batch.many([d], table=str(old))
     head, rows = _rows(old)

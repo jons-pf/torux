@@ -211,3 +211,26 @@ def test_the_line_search_knows_a_line_of_lower_period():
     assert chains.distinct_crossings(ring)
     assert not chains.distinct_crossings(np.array([[0.2917505075, 0.0]] * 13))
     assert not chains.distinct_crossings(np.concatenate([ring[:3], ring[:3]]))
+
+
+def test_a_certificate_says_what_it_rests_on():
+    """torux.chainlist.provenance: each certificate that holds names its construction and gives the closed lines it
+    is built on (p, q, residue, crossings of a plane), so that a tracer of one's own can check them; a lost ring
+    rests on none, and a certificate that does not hold gives nothing."""
+    pts = _points(5, 0.1)
+    edge = dict(kind="edge_barrier", ok=True, certificate="manifold", F_up=0.02, plane_phi=0.0,
+                orbit=dict(p=-2, q=5, residue=-1.4, points=pts))
+    e = chainlist.provenance(edge)
+    assert e["construction"] == "edge barrier" and e["bound_Wb"] == 0.02
+    assert e["lines"] == [dict(p=-2, q=5, residue=-1.4, plane_phi=0.0, crossings=pts, role="X")]
+    ring = chainlist.provenance(dict(kind="edge_barrier", ok=True, certificate="lost_ring", F_up=0.03))
+    assert ring["construction"] == "lost ring" and ring["lines"] == []
+    band = chainlist.provenance(dict(kind="island_band_manifold", ok=True, chain=dict(p=-1, q=5), phi_s=0.0,
+                                     interval=[0.001, 0.0012], X_line=dict(residue=-0.2, points=pts),
+                                     O_line=dict(residue=0.2, points=_points(5, 0.11))))
+    assert band["construction"] == "manifold island band" and band["interval_Wb"] == [0.001, 0.0012]
+    assert [ln["role"] for ln in band["lines"]] == ["X", "O"] and band["lines"][0]["q"] == 5
+    old = chainlist.provenance(dict(kind="island_band", ok=True, chain=(-1, 5), interval=[0.001, 0.0012],
+                                    O_line=dict(residue=0.2, points=pts, plane_phi=0.0)))
+    assert old["construction"] == "island band from island tori" and old["lines"][0]["crossings"] == pts
+    assert chainlist.provenance(dict(edge, ok=False)) is None

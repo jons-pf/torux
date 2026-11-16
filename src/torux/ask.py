@@ -403,6 +403,15 @@ def _short(c):
         return None
     if len(out) == 1:
         return None
+    # what it rests on: its construction and closed lines (q, residues, crossings), for a tracer of one's own
+    try:
+        from .chainlist import provenance
+        pv = provenance(c)
+    except Exception:  # noqa: BLE001
+        pv = None
+    if pv is not None:
+        out["construction"] = pv["construction"]
+        out["lines"] = pv["lines"]
     return out
 
 
