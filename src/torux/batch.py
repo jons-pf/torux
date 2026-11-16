@@ -556,6 +556,7 @@ def _work(job):
     if eng is not None:
         dmin = float(((res.record or {}).get("engine") or {}).get("dmin", 0.05))
     res._engine = None
+    res._family = None           # (torux.crossed's tori, in this process only)
     return dict(answer=res, row=_row(res, src, request), engine=dmin)
 
 

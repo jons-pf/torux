@@ -91,13 +91,18 @@ def test_the_pendulum_half_width_is_the_pendulums(monkeypatch):
         assert abs(ch.half_width_est - width) < 1e-3 * width, (p, q, ch.half_width_est, width)
 
 
+def _points(q, r, R=0.3):
+    """q distinct crossings round (R, 0) at radius r."""
+    return [[R + r * np.cos(2 * np.pi * k / q), r * np.sin(2 * np.pi * k / q)] for k in range(q)]
+
+
 def test_every_kind_of_record_gives_its_chains():
     """The family's chains, an island band's chain (torux.analysis's and torux.islandband's records) and an edge
     barrier's closed lines, each as far as its stage computed it."""
     rec = dict(nfp=NFP, chains=[chain_record(_chain())],
                certificate=dict(kind="edge_barrier", ok=False, plane_phi=0.0,
-                                screened=[dict(q=5, p=-2, residue=-0.41, points=[[0.4, 0.0]] * 5, plane_phi=0.0,
-                                               lost=[]), dict(q=7, p=-3, residue=0.2, points=[[0.41, 0.0]] * 7,
+                                screened=[dict(q=5, p=-2, residue=-0.41, points=_points(5, 0.1), plane_phi=0.0,
+                                               lost=[]), dict(q=7, p=-3, residue=0.2, points=_points(7, 0.11),
                                                               plane_phi=0.0, lost=[]), dict(reason="not hyperbolic")],
                                 candidates=[dict(q=5, p=-2, residue=-0.41, ok=False, reason="not lost")]),
                bracket_certificate=dict(kind="island_band_manifold", ok=False, interval=[0.0013, 0.0016],
@@ -157,8 +162,10 @@ def _cnt(tilt_deg, ratio, i_il=170e3):
 def test_a_request_past_the_last_chain_keeps_the_chain_and_names_its_edge_barrier(tmp_path):
     """CNT at 88 degrees and I_IL / I_PF = 3.632, whose surfaces end within 2e-6 Wb of the axis, asked for 3.79e-4 Wb:
     the family stalls at the iota = -2/3 chain and cannot jump it, so the only certificate tried is an edge barrier.
-    The answer says so and no island band, and it keeps the chain (its p/q, O line residue, half width) and the closed
-    lines the edge barrier screened beyond it, with their crossings, through save and load."""
+    The answer says so and no island band, and it keeps the chain (its p/q and lines) and the closed lines the edge
+    barrier screened beyond it, with their crossings, through save and load. The elliptic line the chain's search
+    converged to there is the magnetic axis gone round three times (its three crossings one point): it is left out,
+    and no half width rests on it."""
     import torux
     a = torux.solve(_cnt(88, 3.632), flux=0.00037895125037584076, budget_s=300)
     text = " ".join(str(a).split())
@@ -166,11 +173,41 @@ def test_a_request_past_the_last_chain_keeps_the_chain_and_names_its_edge_barrie
     assert "an edge barrier, which did not hold the request" in text and "island band" not in text
     fam = [c for c in a.evidence["chains"] if c["found_in"] == "family"]
     assert [(c["p"], c["q"]) for c in fam] == [(-1, 3)] and abs(fam[0]["iota"] + 2 / 3) < 1e-15
-    # (a thin chain: half widths of a few 1e-6 Wb at most, where the verified surfaces end within 2e-6 Wb)
-    assert 0 < fam[0]["O_residue"] < 1e-3 and 1e-7 < fam[0]["half_width_Wb"] < 5e-6, fam[0]
-    assert all(len(ln["section"]) == 3 for ln in fam[0]["O"] + fam[0]["X"])
+    assert fam[0]["lines_of_lower_period"] >= 1, fam[0]
+    assert all(len({tuple(np.round(p, 8)) for p in ln["section"]}) == 3 for ln in fam[0]["O"] + fam[0]["X"])
+    if not fam[0]["O"]:
+        assert "half_width_Wb" not in fam[0] and "O_residue" not in fam[0]
     edge = [c for c in a.evidence["chains"] if c["found_in"] == "edge barrier"]
     assert edge and all(ln.get("section") for c in edge for ln in c["O"] + c["X"])
     path = tmp_path / "cnt88.json"
     a.save(str(path))
     assert Answer.read(str(path)).evidence["chains"] == a.evidence["chains"]
+
+
+def test_a_line_of_lower_period_is_not_a_line_of_the_chain():
+    """A closed line whose q crossings are one point (the magnetic axis gone round q times, which Newton can converge
+    to from a chain's starting curve) is left out of the chain, and the half width is taken again from the chain's own
+    elliptic line, or there is none."""
+    axis = [[0.2917505075, 0.0]] * 6
+    ring = [[0.3 + 0.01 * np.cos(k * np.pi / 3), 0.01 * np.sin(k * np.pi / 3)] for k in range(6)]
+    rec = dict(p=-1, q=6, iota_r=-1 / 3, flux_r=-0.00145, shear=-3.3, half_width_est=9.9e-4,
+               lines=[dict(residue=0.049, section=axis), dict(residue=2.5e-5, section=ring),
+                      dict(residue=-2.4e-5, section=ring[1:] + ring[:1])])
+    got = chainlist.of_record(dict(nfp=NFP, chains=[rec]))[0]
+    assert got["lines_of_lower_period"] == 1 and got["O_residue"] == 2.5e-5 and len(got["O"]) == 1
+    assert got["half_width_Wb"] == chains.pendulum_half_width(2.5e-5, 6, NFP, -3.3)
+    alone = chainlist.of_record(dict(nfp=NFP, chains=[dict(rec, lines=rec["lines"][:1] + rec["lines"][2:])]))[0]
+    assert alone["O"] == [] and "half_width_Wb" not in alone and len(alone["X"]) == 1
+    edge = dict(kind="edge_barrier", ok=False, plane_phi=0.0,
+                screened=[dict(q=6, p=-1, residue=0.049, points=axis, plane_phi=0.0)])
+    e = chainlist.of_record(dict(nfp=NFP, certificate=edge))[0]
+    assert e["O"] == [] and e["lines_of_lower_period"] == 1
+
+
+def test_the_line_search_knows_a_line_of_lower_period():
+    """torux.chains.distinct_crossings, which chain_lines asks of every converged line: q distinct crossings for a line
+    of the chain, fewer for the axis gone round q times or a line of period dividing q gone round q / d times."""
+    ring = np.array(_points(6, 0.01))
+    assert chains.distinct_crossings(ring)
+    assert not chains.distinct_crossings(np.array([[0.2917505075, 0.0]] * 13))
+    assert not chains.distinct_crossings(np.concatenate([ring[:3], ring[:3]]))

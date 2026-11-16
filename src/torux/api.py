@@ -60,6 +60,7 @@ class Result:
     gradients: dict = None
     record: dict = None
     _engine: Any = None
+    _family: Any = None            # the family's tori and axis behind a verified surface (torux.crossed), not saved
 
     def field(self, x):
         """B (T) at Cartesian points x (..., 3) in metres."""
@@ -220,10 +221,12 @@ def _solve(req, src, surfs, budget, t0, deadline):
         return Result("error", budget, time.time() - t0, evidence=dict(error=repr(e)))
     if ns is not None:
         rec["proof"] = ns
+    family = rec.pop("_family", None)
     status = rec.get("status", "error")
     if status == "family":
         status = "range"
     out = Result(status, budget, 0.0, record=rec)
+    out._family = family
     s = rec.get("surface")
     from .field import FieldEngine
     out._engine = FieldEngine(src, dmin=rec.get("engine", {}).get("dmin", 0.05))

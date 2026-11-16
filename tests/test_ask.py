@@ -415,7 +415,8 @@ def test_every_chain_a_search_met_is_in_its_answer_and_survives_save_and_load(mo
     assert set(whole) == {(-1, 6), (-2, 5)} and res.evidence["chains"] == s["chains"]
     assert whole[(-1, 6)]["found_by"] == [1] and whole[(-1, 6)]["half_width_Wb"] == 4.9e-4
     assert whole[(-2, 5)]["found_by"] == list(range(2, len(s["requests"]) + 1))
-    assert any(w.startswith("chains: iota = -1/3 near 0.00145 Wb, half width about 4.9e-04 Wb (request 1: family) | "
+    assert any(w.startswith("chains: iota = -1/3 near 0.00145 Wb by extrapolation, half width about 4.9e-04 Wb "
+                            "(request 1: family) | "
                             "iota = -4/5 (requests 2, ") for w in s["words"]), s["words"]
     path = tmp_path / "largest.json"
     Answer._of(res, None).save(str(path))
@@ -465,7 +466,8 @@ def test_size_too_large_quasr1100073():
 @pytest.mark.slow
 def test_largest_hsx():
     """HSX: at least 0.0359 Wb verified, more than the no-flux request returns (0.0108 Wb), inside the stated
-    budget, with what limits it, and the same surface as a direct request at its flux."""
+    budget and the time after it the chains its family stepped across may take, with what limits it, and the same
+    surface as a direct request at its flux."""
     t = time.time()
     res = ask.solve(HSX, largest=True)
     wall = time.time() - t
@@ -473,7 +475,7 @@ def test_largest_hsx():
     print(f"\n{res.status} {s['flux']!r} Wb in {wall:.0f} s of {s['budget_s']:.0f}:\n  " + "\n  ".join(s["words"])
           + "\n" + "\n".join(map(str, s["requests"])))
     assert res.status == "surface" and s["flux"] >= 0.0359
-    assert wall <= s["budget_s"] + 120
+    assert wall <= s["budget_s"] + 120 + ask.CROSSED_S
     assert s["beyond"] is not None
     rng = [e for e in s["requests"] if e["flux"] is None][0]
     assert s["flux"] > (rng["verified_lower_bound_Wb"] or 0.0)

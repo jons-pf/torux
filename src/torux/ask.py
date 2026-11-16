@@ -7,7 +7,9 @@
 Every one is answered by the shipped solver's direct requests at fluxes (torux.api.solve), never by scaling or
 interpolating a surface: the surface returned is the solver's answer to a request for its own flux.
 res.evidence["search"] says what was asked, what was reached, what stands beyond, the budget and every request
-made, with its outcome and time. search_rows(res) gives the same as a few lines to print.
+made, with its outcome and time. search_rows(res) gives the same as a few lines to print. The largest also lists the
+island chains its answer's family stepped across (torux.crossed), in the time its requests left of the budget, or at
+most CROSSED_S past it (CROSSED_SHARE of it, if less) when they left less.
 
 The sizes are VMEC's and SIMSOPT's: the volume enclosed, and sqrt(A / pi) with A the cross-sectional area at
 fixed cylindrical angle averaged over the angle.
@@ -32,6 +34,11 @@ GAP = 0.01
 MIN_REQUEST_S = 5.0
 # the largest: requests beyond every flux seen, each twice the last, while each comes back verified
 MAX_BEYOND = 8
+# the largest: the chains the answer's family stepped across (torux.crossed) take what the search left of the budget,
+# and when that is less than the least of these seconds and this share of the budget, that much from the search's end:
+# the search itself is never given less (so its answer is the one it would be without them)
+CROSSED_S = 90.0
+CROSSED_SHARE = 0.075
 UNITS = {"minor_radius": "m", "volume": "m^3"}
 WORDS = {"minor_radius": "minor radius", "volume": "volume"}
 
@@ -151,6 +158,8 @@ class _Search:
         self.failed = {}          # flux -> log entry of a request that returned no surface
         self.certs = []           # (flux asked, certificate in short, the solver's own) of every valid certificate
         self.missed = None        # what was asked with the answer and the budget left no room for, in words
+        self.crossed = None       # (verified tori, engine, axis) of the crossed stage, for placing every chain
+        self.after = 0.0          # seconds the crossed stage ran past the deadline
 
     def left(self):
         return self.deadline - time.time()
@@ -216,6 +225,9 @@ class _Search:
         r.evidence = dict(r.evidence or {})
         budget_words = (f"{self.budget:.0f} s, stated from the source's size since none was given" if self.stated
                         else f"{self.budget:.0f} s, as given")
+        if self.after > 0.5:
+            budget_words += (f", and {self.after:.0f} s after it for the chains the answer's family stepped across "
+                             f"(at most {min(CROSSED_S, CROSSED_SHARE * self.budget):.0f} s)")
         n = len(self.log)
         req_words = (f"requests: {n}, {sum(e['wall_s'] for e in self.log):.0f} s in all "
                      "(answer.evidence['search']['requests'])")
@@ -223,8 +235,14 @@ class _Search:
             words = list(words) + [self.missed]
         from .chainlist import merge
         chains = merge([(i + 1, e.get("chains")) for i, e in enumerate(self.log)])
+        if self.crossed is not None:
+            from .crossed import annotate
+            try:
+                annotate(chains, *self.crossed)
+            except Exception:  # noqa: BLE001  (placing the chains costs only their placement, never the answer)
+                pass
         if chains and not brief:
-            words = list(words) + [_chain_words(chains)]
+            words = list(words) + _chain_words(chains)
         r.evidence["search"] = dict(question=self.question, asked=self.asked, budget_s=self.budget,
                                     budget_stated=self.stated, wall_s=time.time() - self.t0, requests=self.log,
                                     words=[f"asked: {self.what}"] + ([] if brief else list(words) + [
@@ -269,24 +287,71 @@ def _chains(r):
         return []
 
 
-def _chain_words(chains):
-    """The chains a search met, in one line."""
+def _chain_name(c):
     from fractions import Fraction
-    parts = []
-    for c in chains[:6]:
-        io = c.get("iota")
-        name = (f"iota = {Fraction(int(round(io * c['q'])), c['q'])}" if io is not None
-                else f"period {c['q']}")
-        if c.get("flux_Wb") is not None:
-            name += f" near {c['flux_Wb']:.3g} Wb"
-        if c.get("half_width_Wb") is not None:
-            name += f", half width about {c['half_width_Wb']:.1e} Wb"
-        k = c["found_by"]
-        req = f"request{'s' if len(k) > 1 else ''} {', '.join(str(x) for x in k)}"
-        parts.append(name + f" ({req}: {' and '.join(c['found_in'])})")
-    more = len(chains) - len(parts)
-    return ("chains: " + " | ".join(parts) + (f" | and {more} more" if more > 0 else "")
-            + " (answer.evidence['chains'])")
+    io = c.get("iota")
+    return f"iota = {Fraction(int(round(io * c['q'])), c['q'])}" if io is not None else f"period {c['q']}"
+
+
+def _placed(c):
+    """Where a chain lies against the verified surfaces, in words ('' when nothing places it)."""
+    iv = c.get("between_verified_Wb")
+    if not iv:
+        return ""
+    if iv[0] is not None and iv[1] is not None:
+        return f"between verified surfaces at {iv[0]:.4g} and {iv[1]:.4g} Wb"
+    if iv[0] is not None:
+        return f"outside the verified surface at {iv[0]:.4g} Wb"
+    return f"inside the verified surface at {iv[1]:.4g} Wb"
+
+
+def _chain_words(chains):
+    """The chains a search met, in a line, and the ones the answer's family stepped across in another."""
+    crossed = [c for c in chains if "stepped across" in c["found_in"]]
+    met = [c for c in chains if "stepped across" not in c["found_in"]]
+    out = []
+    if met:
+        parts = []
+        for c in met[:6]:
+            name = _chain_name(c)
+            if c.get("flux_Wb") is not None:
+                name += f" near {c['flux_Wb']:.4g} Wb"
+                if c.get("flux_from") == "extrapolated":
+                    fam = c.get("family_Wb") or []
+                    name += (f" by extrapolation from the family torus at {fam[0]:.4g} Wb" if fam
+                             else " by extrapolation")
+            if c.get("half_width_Wb") is not None:
+                name += f", half width about {c['half_width_Wb']:.1e} Wb"
+            where = _placed(c)
+            if where:
+                name += f", its lines {where}"
+            k = c["found_by"]
+            req = f"request{'s' if len(k) > 1 else ''} {', '.join(str(x) for x in k)}"
+            parts.append(name + f" ({req}: {' and '.join(c['found_in'])})")
+        more = len(met) - len(parts)
+        out.append("chains: " + " | ".join(parts) + (f" | and {more} more" if more > 0 else "")
+                   + " (answer.evidence['chains'])")
+    if crossed:
+        parts = []
+        for c in crossed[:12]:
+            name = _chain_name(c)
+            if c.get("flux_Wb") is not None:
+                name += f" at {c['flux_Wb']:.4g} Wb"
+            more_ = [w for w in (_placed(c),
+                                 f"half width about {c['half_width_Wb']:.1e} Wb" if c.get("half_width_Wb") is not None
+                                 else "") if w]
+            if c.get("cut"):
+                more_.append("cut short by the budget")
+            parts.append(name + (f" ({', '.join(more_)})" if more_ else ""))
+        more = len(crossed) - len(parts)
+        out.append("stepped across: " + " | ".join(parts) + (f" | and {more} more" if more > 0 else "")
+                   + f" (the answer's family, chains of q <= {_qmax()}: answer.evidence['chains'])")
+    return out
+
+
+def _qmax():
+    from .crossed import QMAX
+    return QMAX
 
 
 def verified(r):
@@ -838,7 +903,41 @@ def _largest_answer(S, lo, stop="budget"):
                 words.append(f"disagreement: the certificate of the request at {_wb(f)} rules out the flux of this "
                              "verified surface: one of the two is wrong")
     fields["stop"] = "budget" if budget_out else stop
+    if ups:
+        fields["no_surface_above_Wb"] = ups[0]
+    if lo is not None:
+        _crossed_stage(S, r)
     return S.finish(r, words, **fields)
+
+
+def _crossed_stage(S, r):
+    """The chains the answer's family stepped across (torux.crossed), into the answering request's chains, with the
+    time the search left, or CROSSED_S (at most CROSSED_SHARE of the budget) from now when that is less; the tori it
+    verified place every chain of the search."""
+    from . import crossed as C
+    e = getattr(r, "_ask_entry", None)
+    if e is None:
+        return
+    t = time.time()
+    deadline = max(S.deadline, t + min(CROSSED_S, CROSSED_SHARE * S.budget))
+    try:
+        recs, vt, ax = C.stage(r, S.src, deadline)
+    except Exception as ex:  # noqa: BLE001  (the stage costs its chains, never the answer)
+        e["crossed"] = dict(error=repr(ex), wall_s=round(time.time() - t, 1))
+        S.after = max(0.0, time.time() - S.deadline)
+        return
+    if recs is None:
+        return
+    from .chainlist import of_record
+    k = next((i + 1 for i, x in enumerate(S.log) if x is e), None)
+    got = of_record(dict(nfp=S.src.nfp, crossed=recs))
+    e["chains"] = list(e.get("chains") or []) + [dict(c, request=k) for c in got]
+    S.after = max(0.0, time.time() - S.deadline)
+    e["crossed"] = dict(chains=len(got), cut=sum(1 for c in got if c.get("cut")), qmax=C.QMAX,
+                        verified_tori=len(vt), wall_s=round(time.time() - t, 1), after_budget_s=round(S.after, 1))
+    S.crossed = (vt, r._engine, ax)
+    _say(f"the answer's family stepped across {len(got)} chain{'s' if len(got) != 1 else ''} of q <= {C.QMAX} in "
+         f"{e['crossed']['wall_s']:.0f} s")
 
 
 def _clock_words(e):

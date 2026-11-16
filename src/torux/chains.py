@@ -68,9 +68,26 @@ def nearest_rational_ahead(iota, diota, nfp, qmax=40, window=0.05):
     return cands[0]
 
 
+SAME_POINT_M = 1e-8     # crossings of one closed line nearer each other than this (m) are one point
+
+
+def distinct_crossings(pts, tol=SAME_POINT_M):
+    """Whether the q crossings (q, 2) of a closed line of period q are q distinct points. A line of lower period d
+    (dividing q) closed after q periods repeats its d crossings q / d times: the magnetic axis, gone round q times, is
+    such a line, and Newton started on a chain's curve can converge to it."""
+    P = np.asarray(pts, float).reshape(-1, 2)
+    if len(P) < 2:
+        return True
+    d = np.linalg.norm(P[:, None, :] - P[None, :, :], axis=-1)
+    np.fill_diagonal(d, np.inf)
+    return bool(np.min(d) > tol)
+
+
 def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline=None, info=None):
     """Closed lines of the chain p/q started on the torus's curves theta = theta0 + iota_r phi for the
-    symmetric starting angles; returns converged, distinct lines with residues.  deadline (absolute, None: none):
+    symmetric starting angles; returns converged, distinct lines with residues, each with q distinct crossings
+    (a line of lower period the Newton converged to is left out, counted in info["lower_period"]).
+    deadline (absolute, None: none):
     no start after it and each Newton cut at it (info["cut"] = True then; the lines found so far are returned)."""
     nfp = torus.nfp
     iota_r = p / q * nfp
@@ -100,6 +117,14 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
                 continue
             ln = OR.line_monodromy(engine, ln)
             pts = ln.section_points(0.0)
+            if not distinct_crossings(pts):
+                # a line of lower period gone round q / d times (the magnetic axis is one): not a line of p/q
+                if verbose:
+                    print(f"    chain {p}/{q} start theta0 {th0:.3f} phi0 {phi0:.3f}: a line of lower period "
+                          f"(residue {ln.residue:.4e}), left out")
+                if info is not None:
+                    info["lower_period"] = info.get("lower_period", 0) + 1
+                continue
             dup = False
             for other in lines:
                 op = other.section_points(0.0)

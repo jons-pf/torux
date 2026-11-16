@@ -761,7 +761,7 @@ def _noaxis_stage(out, eng, source, flux, axes, deadline, quick, tol, dmin, verb
 @_budget.budgeted
 def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, max_jumps=6,
             Mmax=128, Nmax=128, budget_s=None, axis_guesses=(), region_pts=None, start_tori=(),
-            upper_bound=False, quick=False, noaxis=None):
+            upper_bound=False, quick=False, noaxis=None, crossed=None):
     if not getattr(source, "stellsym", True):
         # no stellarator symmetry: the general basis (R, Z with both parities, a phase condition), axis and
         # family of torux.family_general (no chain jumps or certificates there yet)
@@ -937,6 +937,20 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             out["surface"]["topology"] = topo
             out["status"] = ("surface" if (best.bn_off <= BN_SURFACE and g["ok"] and quad_ok and topo["ok"])
                              else "surface_unverified")
+            if out["status"] == "surface":
+                # the family's tori and axis, for the chains it stepped across (torux.crossed): kept on the Result,
+                # never in the record (torux.api)
+                out["_family"] = dict(tori=[t for t in tori if abs(t.flux) <= abs(best.flux) * (1 + 1e-12)], axis=ax,
+                                      dmin=dmin, tol=tol)
+            if crossed and out["status"] == "surface":
+                # the chains the family stepped across on its way to the surface (torux.crossed)
+                from .crossed import crossed_chains, QMAX
+                t_c = time.time()
+                opts_c = crossed if isinstance(crossed, dict) else {}
+                out["crossed"] = crossed_chains(eng, cont, source, tori, ax, dmin, tol, source.nfp,
+                                                qmax=int(opts_c.get("qmax", QMAX)),
+                                                deadline=opts_c.get("deadline", deadline), verbose=verbose)
+                out["timings"]["crossed"] = time.time() - t_c
         elif flux is not None:
             out["status"] = "undetermined"
             cert = certify_request(eng, cont, brackets, abs(target), tol=tol, deadline=deadline, verbose=verbose,
@@ -1086,6 +1100,7 @@ def chain_record(ch):
                 lines=[dict(residue=l.residue, R0=l.section_points(0.0)[0].tolist(), res=l.res,
                             section=l.section_points(0.0).tolist()) for l in ch.lines],
                 **({"shear_at": ch.info["shear_at"]} if ch.info.get("shear_at") else {}),
+                **({"lower_period": int(ch.info["lower_period"])} if ch.info.get("lower_period") else {}),
                 **({"cut": True} if ch.info.get("cut") else {}))
 
 
