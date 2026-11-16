@@ -139,15 +139,139 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
     return lines
 
 
-def analyse_chain(engine, tori, p, q, verbose=False, deadline=None):
+TRACED_REACH = (0.5, 0.9)   # the traced search's half-lines: from half the torus's own distance from the axis on each to
+                            # 0.9 of the axis's distance from the nearest part of the source
+TRACED_NSCAN = 240          # starts on each half-line, spaced geometrically
+TRACED_QMAX = 30            # chains of higher period are not traced
+TRACED_WALL_S = 90.0        # the traced search's own limit (s), within the caller's deadline
+
+
+def traced_chain_lines(engine, torus, axis, p, q, known=(), deadline=None, info=None, verbose=False):
+    """The chain p/q's stellarator-symmetric elliptic line by tracing, for a chain beyond the torus `torus` (the family's
+    last before it).  Newton from the torus's curves (chain_lines) can end on the magnetic axis there: the chain lies
+    beyond the torus, its elliptic line often many times farther from the axis on one half-line than the torus's
+    curves reach (CNT at 88 degrees, I_IL / I_PF = 3.5: the torus 2.6e-3 m from the axis, the line 3.2e-2 m), and the
+    axis is the nearer fixed point.  On each of the four symmetric half-lines, from TRACED_REACH[0] times the torus's
+    crossing to TRACED_REACH[1] times the axis's distance from the source, the closed lines of period q and winding p
+    nearest the axis are solved outward until an elliptic one (torux.chainfind.symmetric_lines_outward), and of those the
+    one nearest the torus (the mean distance of its crossings of the plane phi = 0 from the torus's section) is the
+    chain's: a farther elliptic line of p/q belongs to another chain of the same p/q.  It has q distinct crossings
+    and is none of `known` (ClosedLine list).  Returns [line] or [], and info["traced"] (when given) says what was tried."""
+    from .chainfind import symmetric_lines_outward
+    nfp = torus.nfp
+    pts_src = engine.source.sample_points()
+    win = {}
+    for plane in (0, 1):
+        phi_s = plane * np.pi / nfp
+        Ra, Za = (float(v[0]) for v in axis.at(np.array([phi_s])))
+        xa = np.array([Ra * math.cos(phi_s), Ra * math.sin(phi_s), Za])
+        d_src = float(np.min(np.linalg.norm(pts_src - xa[None, :], axis=1))) if len(pts_src) else 0.5 * Ra
+        R2, _ = torus.geometry_on(np.array([0.0, np.pi]), np.array([phi_s, phi_s]))
+        for Rb in R2:
+            side = 1 if Rb > Ra else -1
+            r = abs(float(Rb) - Ra)
+            r_hi = TRACED_REACH[1] * d_src
+            if np.isfinite(r) and 0 < TRACED_REACH[0] * r < r_hi:
+                win[(plane, side)] = (TRACED_REACH[0] * r, r_hi)
+    t0 = time.time()
+    d_own = t0 + TRACED_WALL_S
+    d_own = d_own if deadline is None else min(deadline, d_own)
+    cands, linfo = symmetric_lines_outward(engine, engine.source, axis, p, q, win, keep=lambda ln: 0 < ln.residue < 1,
+                                           skip=known, deadline=d_own, nscan=TRACED_NSCAN, verbose=verbose)
+    th = np.linspace(0, 2 * np.pi, 512, endpoint=False)
+    TR, TZ = torus.geometry_on(th, np.zeros_like(th))
+    T = np.stack([TR, TZ], -1)
+    new, dist = [], []
+    for ln in cands:
+        pts = ln.section_points(0.0)
+        if not (0 < ln.residue < 1) or not distinct_crossings(pts):
+            continue
+        if any(np.min(np.linalg.norm(pts[:, None, :] - o.section_points(0.0)[None, :, :], axis=-1)) < 1e-6
+               for o in list(known) + new):
+            continue
+        ln.info["found_by"] = "traced"
+        new.append(ln)
+        dist.append(float(np.mean(np.min(np.linalg.norm(pts[:, None, :] - T[None, :, :], axis=-1), axis=1))))
+    pick = [new[int(np.argmin(dist))]] if new else []
+    res_log = None
+    if pick:
+        # the line resolved: its Fourier order doubled until its crossings and residue no longer move
+        ln, res_log = resolved_line(engine, pick[0], deadline=d_own)
+        pick = [] if ln is None or not (0 < ln.residue < 1) or not distinct_crossings(ln.section_points(0.0)) else [ln]
+        if pick:
+            ln.info["found_by"] = "traced"
+    if info is not None:
+        info["traced"] = dict(windows={f"{k[0]},{k[1]}": [float(v[0]), float(v[1])] for k, v in win.items()},
+                              tried=linfo, elliptic=[dict(residue=float(l.residue), from_torus_m=d,
+                                                          R0=l.section_points(0.0)[0].tolist())
+                                                     for l, d in zip(new, dist)],
+                              resolution=res_log, wall_s=float(time.time() - t0), cut=bool(time.time() > d_own))
+    return pick
+
+
+RESOLVED_K_MAX = 1024       # the highest Fourier order resolved_line tries
+RESOLVED_POS_M = 1e-6       # crossings that move less than this (m) ...
+RESOLVED_RES = (1e-7, 1e-5)  # ... and a residue r that moves less than [0] + [1] |r| between two orders: resolved (the
+                            # order's own error is far below what it moved from the order half its size)
+
+
+def resolved_line(engine, line, deadline=None, k_max=RESOLVED_K_MAX):
+    """The symmetric closed line `line` (converged) solved again at twice its Fourier order, from itself, until its
+    crossings of the plane phi = 0 move less than RESOLVED_POS_M and its residue less than RESOLVED_RES between two
+    orders: a line Newton converged at too low an order closes only to that order's truncation, and its residue is
+    off by as much (a traced line's first order is set by its period alone).  Returns (line, log) with the last
+    order's line, or (None, log) when it does not settle by k_max or a solve fails."""
+    prev = line
+    log = [dict(K=int(prev.K), residue=float(prev.residue))]
+    while 2 * prev.K <= k_max:
+        if deadline is not None and time.time() > deadline:
+            log.append(dict(cut=True))
+            return None, log
+        ln = OR.solve_closed_line(engine, prev.nfp, prev.q, lambda ph, c=prev: c.at(ph)[0],
+                                  lambda ph, c=prev: c.at(ph)[1], phi0=prev.phi0, K=2 * prev.K, symmetric=True,
+                                  deadline=deadline)
+        if not ln.converged:
+            log.append(dict(K=int(ln.K), converged=False, res=float(ln.res)))
+            return None, log
+        ln = OR.line_monodromy(engine, ln)
+        dpos = float(np.max(np.linalg.norm(ln.section_points(0.0) - prev.section_points(0.0), axis=-1)))
+        dres = abs(ln.residue - prev.residue)
+        log.append(dict(K=int(ln.K), residue=float(ln.residue), moved_m=dpos, residue_moved=float(dres)))
+        if dpos < RESOLVED_POS_M and dres < RESOLVED_RES[0] + RESOLVED_RES[1] * abs(ln.residue):
+            ln.info["resolved"] = True
+            return ln, log
+        prev = ln
+    return None, log
+
+
+def analyse_chain(engine, tori, p, q, verbose=False, deadline=None, axis=None):
     """Chain p/q next to the family `tori` (TorusState list): lines, residues, flux and shear at
-    the resonance (interpolated in the family), pendulum half width.  deadline: chain_lines' (ch.info["cut"])."""
+    the resonance (interpolated in the family), pendulum half width.  deadline: chain_lines' (ch.info["cut"]).
+    axis (the family's magnetic axis): where Newton from the torus's curves leaves the chain with no elliptic line, its
+    symmetric lines are sought again by tracing (traced_chain_lines, ch.info["traced_lines"] the lines it added).  The
+    jump's ladder (width_scale) rests on the elliptic lines from the torus's curves only, as without the traced search:
+    the half width of a traced line is the record's estimate."""
     nfp = tori[-1].nfp
     iota_r = p / q * nfp
     ch = Chain(p, q, iota_r)
     # the family torus nearest in iota as the starting surface
     k = int(np.argmin([abs(t.iota - iota_r) for t in tori]))
     ch.lines = chain_lines(engine, tori[k], p, q, verbose=verbose, deadline=deadline, info=ch.info)
+    O_newton = [l for l in ch.lines if 0 < l.residue < 1]
+    if (axis is not None and not O_newton and q <= TRACED_QMAX
+            and (deadline is None or time.time() < deadline - 10.0)):
+        try:
+            more = traced_chain_lines(engine, tori[k], axis, p, q, known=ch.lines, deadline=deadline, info=ch.info,
+                                      verbose=verbose)
+        except Exception as e:  # noqa: BLE001
+            from .envfail import environment_failure
+            if environment_failure(e):
+                raise
+            more = []
+            ch.info["traced"] = dict(error=repr(e))
+        if more:
+            ch.lines = ch.lines + more
+            ch.info["traced_lines"] = len(more)
     ch.O = [l for l in ch.lines if 0 < l.residue < 1]
     ch.X = [l for l in ch.lines if not (0 < l.residue < 1)]
     fl = np.array([t.flux for t in tori]); io = np.array([t.iota for t in tori])
@@ -162,6 +286,8 @@ def analyse_chain(engine, tori, p, q, verbose=False, deadline=None):
     if ch.O and np.isfinite(ch.shear) and ch.shear != 0:
         RO = max(l.residue for l in ch.O)
         ch.half_width_est = pendulum_half_width(RO, q, nfp, ch.shear)
+    if O_newton and np.isfinite(ch.shear) and ch.shear != 0:
+        RO = max(l.residue for l in O_newton)
         # q times the half width: the scale the jump's ladder and the island tori's width are set on, their
         # numbers as they were before the estimate was divided by q
         ch.info["width_scale"] = float(2 * nfp * math.sqrt(RO) / (math.pi * q * abs(ch.shear)))

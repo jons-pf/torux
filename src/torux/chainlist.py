@@ -14,6 +14,8 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
                     the plane at cylindrical angle plane_phi (radians). A line whose q crossings are fewer than q
                     distinct points (the magnetic axis gone round q times) is not one of them: lines_of_lower_period
                     counts those left out, and the half width is the chain's own elliptic line's or none
+    lines_traced    of its O and X lines, those found by tracing from the symmetric half-lines (torux.chains.
+                    traced_chain_lines) where Newton from the family's torus left it with no elliptic line
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
@@ -134,6 +136,8 @@ def _family(c, nfp):
     if O:
         out["O_residue"] = max(o["residue"] for o in O)
     out["O"], out["X"] = O, X
+    if c.get("traced_lines"):
+        out["lines_traced"] = int(c["traced_lines"])     # (torux.chains.traced_chain_lines) of its lines, found by tracing
     if c.get("cut"):
         out["cut"] = True            # the chain's line search was cut by the deadline
     if "flux_Wb" in out:
