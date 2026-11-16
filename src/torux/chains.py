@@ -158,6 +158,34 @@ def traced_chain_lines(engine, torus, axis, p, q, known=(), deadline=None, info=
     chain's: a farther elliptic line of p/q belongs to another chain of the same p/q.  It has q distinct crossings
     and is none of `known` (ClosedLine list).  Returns [line] or [], and info["traced"] (when given) says what was tried."""
     from .chainfind import symmetric_lines_outward
+    # one search a chain and source: the requests of one search that stall at the same chain share it (a search cut by
+    # its deadline is not kept)
+    cache = getattr(engine.source, "_traced_chain_lines", None)
+    if cache is None:
+        cache = {}
+        try:
+            engine.source._traced_chain_lines = cache
+        except AttributeError:
+            pass
+    key = (int(p), int(q))
+    th = np.linspace(0, 2 * np.pi, 512, endpoint=False)
+    TR, TZ = torus.geometry_on(th, np.zeros_like(th))
+    T = np.stack([TR, TZ], -1)
+    if key in cache:
+        from .crossed import inside
+        pick, rec = cache[key]
+        # the same chain only while the torus has not passed it: a line inside this torus is another chain's of p/q,
+        # and where none was found, a torus of other flux than the one searched from may stand before another chain
+        f0, f1 = abs(float(rec.get("torus_flux", np.nan))), abs(float(getattr(torus, "flux", np.nan)))
+        same = (all(not np.any(inside(T, ln.section_points(0.0))[0]) for ln in pick) if pick
+                else bool(np.isfinite(f0) and np.isfinite(f1) and f0 / 1.25 <= f1 <= 1.25 * f0))
+        if same:
+            pick = [ln for ln in pick if not any(
+                np.min(np.linalg.norm(ln.section_points(0.0)[:, None, :] - o.section_points(0.0)[None, :, :], axis=-1))
+                < 1e-6 for o in known)]
+            if info is not None:
+                info["traced"] = dict(rec, reused=True)
+            return list(pick)
     nfp = torus.nfp
     pts_src = engine.source.sample_points()
     win = {}
@@ -178,9 +206,6 @@ def traced_chain_lines(engine, torus, axis, p, q, known=(), deadline=None, info=
     d_own = d_own if deadline is None else min(deadline, d_own)
     cands, linfo = symmetric_lines_outward(engine, engine.source, axis, p, q, win, keep=lambda ln: 0 < ln.residue < 1,
                                            skip=known, deadline=d_own, nscan=TRACED_NSCAN, verbose=verbose)
-    th = np.linspace(0, 2 * np.pi, 512, endpoint=False)
-    TR, TZ = torus.geometry_on(th, np.zeros_like(th))
-    T = np.stack([TR, TZ], -1)
     new, dist = [], []
     for ln in cands:
         pts = ln.section_points(0.0)
@@ -206,6 +231,10 @@ def traced_chain_lines(engine, torus, axis, p, q, known=(), deadline=None, info=
                                                           R0=l.section_points(0.0)[0].tolist())
                                                      for l, d in zip(new, dist)],
                               resolution=res_log, wall_s=float(time.time() - t0), cut=bool(time.time() > d_own))
+    cut = time.time() > d_own or any(t.get("cut") for t in linfo) or bool(res_log and any(r.get("cut") for r in res_log))
+    if not cut:
+        cache[key] = (list(pick), dict(wall_s=float(time.time() - t0), found=len(pick),
+                                       torus_flux=float(getattr(torus, "flux", np.nan))))
     return pick
 
 

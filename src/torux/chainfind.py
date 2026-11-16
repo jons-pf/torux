@@ -247,14 +247,15 @@ def symmetric_chain_lines(engine, source, axis, p, q, windows, deadline=None, ns
 
 
 def symmetric_lines_outward(engine, source, axis, p, q, windows, keep, skip=(), deadline=None, nscan=240,
-                            steps_per_period=24, verbose=False):
+                            steps_per_period=24, verbose=False, max_solves=2):
     """On each symmetric half-line of `windows` ({(plane, side): (r_lo, r_hi)} as symmetric_chain_lines', the starts
     spaced geometrically in r), the first stellarator-symmetric closed line of period q and winding p outward from the
     axis that keep(line) accepts: sign changes of Z after q half periods, refined, the winding about the axis checked
     on their traced trajectories, then each Newton-solved as a Fourier curve (torux.orbits.solve_closed_line) with its
-    spectral monodromy, nearest the axis first, until one is kept.  A root within 1e-6 m of a crossing of a line in
-    `skip` (ClosedLine list) on that half-line is that line and is not solved again.  Returns (lines, info): at most
-    one line a half-line, distinct."""
+    spectral monodromy, nearest the axis first, until one is kept or max_solves have been solved on that half-line (the
+    lines nearest the axis are the nearest chain's, and a farther one would be another chain's).  A root within 1e-6 m
+    of a crossing of a line in `skip` (ClosedLine list) on that half-line is that line and is not solved again.
+    Returns (lines, info): at most one line a half-line, distinct."""
     nfp = int(source.nfp)
     T = 2 * np.pi / nfp
     sgn = SD.bphi_sign(engine, axis)
@@ -291,7 +292,11 @@ def symmetric_lines_outward(engine, source, axis, p, q, windows, keep, skip=(), 
         ang = np.unwrap(np.arctan2(Y[:, :, 1] - Zax_[:, None], Y[:, :, 0] - Rax_[:, None]), axis=0)
         wind = (ang[-1] - ang[0]) / (2 * np.pi)
         kept = None
+        solves = 0
         for j, R0 in enumerate(roots):
+            if solves >= max_solves:
+                info.append(dict(plane=plane, side=side, stopped="max_solves"))
+                break
             if deadline is not None and time.time() > deadline:
                 info.append(dict(plane=plane, side=side, cut=True))
                 break
@@ -312,6 +317,7 @@ def symmetric_lines_outward(engine, source, axis, p, q, windows, keep, skip=(), 
                 continue
             gR, gZ = _fourier_guess(Y[:-1, j, 0], Y[:-1, j, 1], q * T, phi_s)
             K = max(24, 10 * q + 16)
+            solves += 1
             ln = OR.solve_closed_line(engine, nfp, q, gR, gZ, phi0=phi_s, K=K, symmetric=True, deadline=deadline)
             if not ln.converged:
                 info.append(dict(rec, rejected="newton", res=float(ln.res)))
