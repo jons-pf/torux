@@ -761,7 +761,7 @@ def _noaxis_stage(out, eng, source, flux, axes, deadline, quick, tol, dmin, verb
 @_budget.budgeted
 def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, max_jumps=6,
             Mmax=128, Nmax=128, budget_s=None, axis_guesses=(), region_pts=None, start_tori=(),
-            upper_bound=False, quick=False, noaxis=None, crossed=None):
+            upper_bound=False, quick=False, noaxis=None, crossed=None, traced=False):
     if not getattr(source, "stellsym", True):
         # no stellarator symmetry: the general basis (R, Z with both parities, a phase condition), axis and
         # family of torux.family_general (no chain jumps or certificates there yet)
@@ -873,6 +873,8 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             out["deferred"] = True
             out["timings"]["family"] = out["timings"]["total"] = time.time() - t0
             return out
+        # (traced: True, or the dict of the question's kept tori, empty at first)
+        traced_on = traced is not None and traced is not False
         while fam.stop_reason == "stalled" and njump < max_jumps and (fam_deadline is None or time.time() < fam_deadline):
             last = tori[-1]
             diota = tori[-1].iota - tori[-2].iota if len(tori) >= 2 else 0.0
@@ -884,10 +886,25 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             # Newton solves were never cut
             ch = analyse_chain(eng, tori, p, q, verbose=verbose, deadline=fam_deadline)
             out["chains"].append(chain_record(ch))
-            with _budget.scope(fam_deadline):
-                new = jump_over(cont, tori, ch, direction=math.copysign(1.0, diota) if diota else 1.0,
-                                verbose=verbose, axis=ax)
-            out["jumps"].append(dict(p=p, q=q, ok=new is not None, flux_after=None if new is None else new.flux))
+            tj = None
+            new = None
+            direction = math.copysign(1.0, diota) if diota else 1.0
+            if traced_on:
+                # (traced) a torus beyond this chain from traced field lines (torux.beyond), found for an earlier
+                # request of the same question, solved again here: the family goes on from it
+                from .beyond import reuse
+                with _budget.scope(fam_deadline):
+                    new, tj = reuse(traced, cont, tori, ch, ax)
+            if new is None:
+                with _budget.scope(fam_deadline):
+                    new = jump_over(cont, tori, ch, direction=direction, verbose=verbose, axis=ax)
+            if new is None and traced_on:
+                # (traced) the jump found no torus beyond the chain: where the family stalled, for the question's own
+                # stage that traces lines beyond it (torux.beyond.stall, torux.beyond.cross)
+                from .beyond import stall
+                stall(traced, tori, ch, ax, direction, dmin)
+            out["jumps"].append(dict(p=p, q=q, ok=new is not None, flux_after=None if new is None else new.flux,
+                                     **({} if tj is None else dict(traced=tj))))
             brackets.append((tori[-1], ch, new))
             if new is None:
                 break

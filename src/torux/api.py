@@ -216,7 +216,9 @@ def _solve(req, src, surfs, budget, t0, deadline):
             rec = analyse_design(src, surfs, flux=flux, budget_s=(0.7 if no_req else 1.0) * a_budget, tol=req.tol,
                                  range_budget_s=0.3 * a_budget if no_req else 0.0)
         else:
-            rec = analyse(src, flux=flux, budget_s=a_budget, tol=req.tol)
+            # (traced) the family crosses a chain its jump could not by a torus from traced lines (torux.beyond):
+            # set on the source by the search for the largest (torux.ask)
+            rec = analyse(src, flux=flux, budget_s=a_budget, tol=req.tol, traced=getattr(src, "_traced", None))
     except Exception as e:  # noqa: BLE001
         return Result("error", budget, time.time() - t0, evidence=dict(error=repr(e)))
     if ns is not None:
