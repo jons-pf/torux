@@ -31,7 +31,9 @@ stellarator symmetry).
 Quasi-symmetry.  For a helicity (M, N), B_QS is the area-weighted mean of |B| along the lines on which
 M theta_B - N nfp zeta_B is constant, and the number is int (|B| - B_QS)^2 dS / int B_QS^2 dS.  For (1, 0) this is
 SIMSOPT's NonQuasiSymmetricRatio on a surface parametrised by Boozer angles, for (0, 1) its quasi-poloidal form,
-and for (1, N) the same in the helical frame, as QUASR computes it for quasi-helical designs.  The helicity
+and for (1, N) SIMSOPT's NonQuasiSymmetricRatio of the surface parametrised in the helical frame, as QUASR computes
+it for quasi-helical designs (NonQuasiSymmetricRatio itself has only the quasi-axisymmetric and quasi-poloidal forms:
+the helical one is that ratio taken in the rotated frame, which tests/test_boozer.py checks against SIMSOPT).  The helicity
 reported is the one of (1, 0), (1, +-1), (1, +-2) and (0, 1) with the smallest number.  QUASR's qs_error is the
 mean of this number over a design's stored surfaces (the square root of that mean is the 'quality of
 quasisymmetry' of QUASR's papers).
@@ -94,7 +96,8 @@ class Boozer:
         b0 = float(self.modes["B"][(self.modes["m"] == 0) & (self.modes["n"] == 0)][0])
         rows = [("mean field", f"{b0:.10g} T"),
                 ("quasi-symmetry", f"{self.quasisymmetry:.4e} for {self.helicity}: SIMSOPT's NonQuasiSymmetricRatio"
-                                   + (" in the helical frame" if self.helicity.m and self.helicity.n else "")
+                                   + (" of the surface in QUASR's helical frame" if self.helicity.m and self.helicity.n
+                                      else "")
                                    + " (QUASR's f_QS)")]
         others = sorted((v, str(h)) for h, v in self._ratios.items() if h != self.helicity)
         if others:
