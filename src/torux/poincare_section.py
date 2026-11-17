@@ -22,7 +22,7 @@ surface whose curve is still open then (or round a chain of more than ISLANDS is
 (Poincare.open).  The tracer (torux.poincare_trace) follows lines with a field within 1e-14 of an engine whose nodes
 give it to rounding down to DMIN_SHARE of the magnetic axis' distance from the nearest conductor: a line has left the
 machine where it comes nearer a conductor than that, turns back in phi next to a coil or leaves the box round the
-source.  Where lines still go after a sixteenth of their length and will take more than SAY_AFTER seconds, the call
+source, LEFT_PAD of the conductors' extent beyond them.  Where lines still go after a sixteenth of their length and will take more than SAY_AFTER seconds, the call
 says then about how long (_say_how_long), and before lines are followed on, how far.  Ctrl-C stops it within seconds, as
 a KeyboardInterrupt.
 
@@ -52,6 +52,9 @@ PROBE_PERIODS = 80          # field periods a probe is followed
 PROBE_STEPS = 12            # steps per field period of a probe (where it goes, not to rounding)
 DMIN_SHARE = 0.3            # a line nearer a conductor than this share of the axis' distance from it has left
 EDGE_EXTRA = 2              # lines started beyond the last line that stayed, to show where lines leave
+LEFT_PAD = 0.5              # a line has left once it is this share of the conductors' extent outside it (_traced_box):
+                            # surfaces and islands reach past the conductors' extent (CNT at 90 degrees, I_IL / I_PF =
+                            # 4.70: the iota -6/19 island to |Z| = 0.501 m, the coils to 0.405 m)
 IOTA_TOL = 1e-4             # the Birkhoff averages of the first half of a line with a rotational transform and of
                             # all of it agree to this, rad a field period. Near a resonance a surface's average settles
                             # slowly: QUASR 1100073's lines next to the axis, 0.1 % from 1/9 a period, differ by
@@ -231,24 +234,28 @@ def _poincare(src, answer, planes, lines, turns, starts):
     rel = np.mod(planes - phi0, period)
     order = np.argsort(rel)
     box, size = _box(src)
+    tbox = _traced_box(box, size)
     if answer is None:
         proved = _proved(src)
         if proved:
             raise ValueError(f"{src.id}: no section to trace: {proved}")
     if starts is not None:
-        out = (starts[:, 0] < box[0]) | (starts[:, 0] > box[1]) | (starts[:, 1] < box[2]) | (starts[:, 1] > box[3])
+        out = (starts[:, 0] < tbox[0]) | (starts[:, 0] > tbox[1]) | (starts[:, 1] < tbox[2]) | (starts[:, 1] > tbox[3])
         if out.any():
             R0, Z0 = starts[np.argmax(out)]
             raise ValueError(f"a line cannot start at R, Z = {R0:g}, {Z0:g} m: that is outside the machine, the box "
-                             f"round its conductors, R {box[0]:.3g} to {box[1]:.3g} m and Z {box[2]:.3g} to "
-                             f"{box[3]:.3g} m")
+                             f"round its conductors, R {tbox[0]:.3g} to {tbox[1]:.3g} m and Z {tbox[2]:.3g} to "
+                             f"{tbox[3]:.3g} m")
     tm = {}
     t = time.time()
     axis = _axis(_engine(src, answer), src, answer, nfp)
     eng = _engine(src, None, _dmin(src, axis, phi0))
     tm["axis"], t = time.time() - t, time.time()
     sign, bref = _sign(eng, src, axis, phi0, box)
-    tr = Tracer(eng, box, eng.dmin, sign, bref=bref, region=_region(src, axis, eng.dmin, box))
+    # round a magnetic axis a line has left only past the grown box (surfaces reach beyond the conductors); without
+    # one there are no surfaces to cut off, and lines leave the box round the conductors as in 0.2.2
+    tr = Tracer(eng, tbox if axis is not None else box, eng.dmin, sign, bref=bref,
+                region=_region(src, axis, eng.dmin, box))
     ax_at = None if axis is None else axis
     if starts is None:
         seeds, steps = _choose_starts(tr, src, axis, phi0, period, box, size, LINES if lines is None else int(lines),
@@ -547,6 +554,15 @@ def _box(src):
     return np.array([max(1e-6, lo[0] - pad), hi[0] + pad, lo[1] - pad, hi[1] + pad]), size
 
 
+def _traced_box(box, size):
+    """The box outside which a line round a magnetic axis has left: the box round the conductors (_box) grown on every
+    side by LEFT_PAD of their extent.  The box round the conductors alone, 5 % of their extent past them, cut off lines
+    on surfaces that reach beyond it.  Where lines start (the probes that find the edge) and the lines of a source
+    with no axis keep the box round the conductors."""
+    pad = LEFT_PAD * size
+    return np.array([max(1e-6, box[0] - pad), box[1] + pad, box[2] - pad, box[3] + pad])
+
+
 def _clear(src, y, phi0, d, nodes=()):
     """Which points (R, Z) of the plane phi0 are at least d from every conductor (and from the points nodes)."""
     from scipy.spatial import cKDTree
@@ -723,7 +739,12 @@ def _choose_starts(tr, src, axis, phi0, period, box, size, nlines, nper, nfp):
     aR, aZ, rmax = _ray(tr, axis, phi0, box)
     r = rmax * np.arange(1, PROBES + 1) / PROBES
     probe = np.column_stack([aR + r, np.full(PROBES, aZ)])
-    o = tr.run(probe, Schedule([0.0], period, PROBE_STEPS, None, phi0), PROBE_PERIODS, phi0)
+    # the probes find the edge in the box round the conductors, as in 0.2.2, so that the lines start where they did
+    traced, tr.box = tr.box, np.asarray(box, float)
+    try:
+        o = tr.run(probe, Schedule([0.0], period, PROBE_STEPS, None, phi0), PROBE_PERIODS, phi0)
+    finally:
+        tr.box = traced
     stayed = ~o["lost"]
     last = r[np.flatnonzero(stayed)[-1]] if stayed.any() else r[0]
     # the steps are chosen on the inner half, where surfaces are: further out, nearer the coils, a period's error

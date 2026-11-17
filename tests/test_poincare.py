@@ -516,3 +516,16 @@ def test_quasr_797878_shows_its_wide_chain():
     settled = [i for i in chain if np.isfinite(p.iota[i])]
     assert len(settled) >= 4, p.lines_table()
     assert all(abs(p.iota[i] + 0.5) < 1e-4 for i in settled), p.lines_table()
+
+
+def test_a_line_on_a_surface_past_the_conductors_has_not_left():
+    """CNT at 90 degrees, I_IL / I_PF = 4.70 (IL centres 0.38475 m): the coils reach |Z| = 0.405 m, the iota = -6/19
+    island |Z| = 0.501 m and torux's verified surface 0.481 m. A line has left only once it is half the conductors'
+    extent past them (in 0.2.2, 5 %: |Z| <= 0.458 m, and those lines were said to have left)."""
+    import torux.poincare_section as P
+    from test_crossed import _cnt
+    box, size = P._box(_cnt(90, 4.70, d=0.38475))
+    tb = P._traced_box(box, size)
+    assert box[3] < 0.501 and tb[3] > 0.501 + 0.25 and tb[2] < -0.501 - 0.25 and tb[0] >= 1e-6
+    assert np.allclose(tb, [max(1e-6, box[0] - 0.5 * size), box[1] + 0.5 * size, box[2] - 0.5 * size,
+                            box[3] + 0.5 * size])
