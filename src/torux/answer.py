@@ -967,10 +967,17 @@ def _range_rows(a, rec):
     if stop == "stalled" and failed:
         j = failed[-1]
         near = next((c.get("flux_r") for c in chains[::-1] if c.get("q") == j.get("q")), None)
-        why.append(f"stalled at {fmax:.3g} Wb, short of the iota = {_iota_frac(j.get('p'), j.get('q'), nfp)} island "
-                   f"chain" + (f" (near {near:.3g} Wb)" if near is not None else "") + ", which it could not jump")
+        st = j.get("stalled_at")
+        if st:
+            # the chain it met first, short of the lowest-order one its jump tried (torux.chains.first_rational_ahead)
+            why.append(f"stalled at {fmax:.3g} Wb, short of the iota = {_iota_frac(st[0], st[1], nfp)} island chain, "
+                       f"and could not jump {_iota_frac(j.get('p'), j.get('q'), nfp)} past it")
+        else:
+            why.append(f"stalled at {fmax:.3g} Wb, short of the iota = {_iota_frac(j.get('p'), j.get('q'), nfp)} "
+                       f"island chain" + (f" (near {near:.3g} Wb)" if near is not None else "") + ", which it could not "
+                       f"jump")
     elif stop == "stalled" and chains:
-        c = chains[-1]
+        c = next((c for c in chains[::-1] if c.get("stalled_at", True)), chains[-1])
         why.append(f"stalled at {fmax:.3g} Wb, near the iota = {_iota_frac(c.get('p'), c.get('q'), nfp)} island "
                    f"chain")
     elif stop == "stalled":
@@ -1145,7 +1152,8 @@ def _found(a, rec):
     prof = _profile(a)
     if len(prof):
         out.append(f"surfaces out to {prof[-1, 0]:.6g} Wb (the solver's check only)")
-    for c in (rec.get("chains") or [])[-1:]:
+    chs = rec.get("chains") or []
+    for c in [next((c for c in chs[::-1] if c.get("stalled_at", True)), chs[-1])] if chs else []:
         out.append(f"the iota = {_iota_frac(c.get('p'), c.get('q'), nfp)} island chain"
                    + (f" near {c['flux_r']:.3g} Wb" if c.get("flux_r") is not None else ""))
     return out

@@ -353,3 +353,25 @@ def test_an_edge_barrier_line_left_millimetres_from_its_closed_line_is_brought_t
     got = chainlist.of_record(dict(nfp=NFP, certificate=edge))[0]
     assert [round(x["residue"], 4) for x in got["X"]] == [30.9168] and got["X"][0]["converged"]
     assert "lines_not_converged" not in got
+
+
+def test_the_family_stalls_at_the_first_rational_it_meets():
+    """CNT at 90 degrees, I_IL / I_PF = 4.70: the family stalls at iota -0.31689. The lowest-order rational ahead is
+    -2/13 (iota -4/13), which the jump tries, but the family meets -3/19 (iota -6/19) first, and that is the chain it
+    stalled at. Where no rational of q <= 30 lies short of the lowest-order one, that one is the first."""
+    assert chains.nearest_rational_ahead(-0.31689, 1e-4, NFP) == (-2, 13)
+    assert chains.first_rational_ahead(-0.31689, (-2, 13), NFP) == (-3, 19)
+    assert chains.first_rational_ahead(-0.3075, (-2, 13), NFP) is None
+    # the rows: the chain met first says the family stalled at it, the one of lowest order past it says not
+    first, low = chain_record(_chain()), dict(chain_record(_chain()), p=-2, q=13, iota_r=-4 / 13)
+    rows = chainlist.of_record(dict(nfp=NFP, chains=[dict(first, stalled_at=True), dict(low, stalled_at=False)]))
+    fam = {(c["p"], c["q"]): c for c in rows if c["found_in"] == "family"}
+    assert fam[(-1, 6)]["stalled_at"] and not fam[(-2, 13)]["stalled_at"]
+    assert fam[(-1, 6)]["family_iota"] == [-0.33253] and fam[(-1, 6)]["flux_from"] == "extrapolated"
+    # a record of 0.2.2 names one chain at a stall: that one
+    assert chainlist.of_record(dict(nfp=NFP, chains=[first]))[0]["stalled_at"]
+    m = chainlist.merge([(1, [dict(fam[(-2, 13)], request=1)]), (2, [dict(fam[(-2, 13)], stalled_at=True, request=2)])])
+    assert m[0]["stalled_at"]
+    m = chainlist.merge([(1, [dict(fam[(-2, 13)], request=1)])])
+    assert not m[0]["stalled_at"]
+
