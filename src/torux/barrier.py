@@ -1246,10 +1246,11 @@ def orbit_from_point(sec, x0, q, h_fd=None, d=+1, polish=2):
 
 def _measure(orb):
     """How well an orbit's stored points close on the map that found them (torux.closure): closure_m, |P^q(x) - x|
-    at its first point x, and distance_m, Newton's step from x."""
-    c, s = orb.info.get("closure"), orb.info.get("step")
+    at its first point x, and distance_m, Newton's step from x (or what the map's error leaves undetermined)."""
+    from .closure import distance
+    c = orb.info.get("closure")
     return dict(closure_m=None if c is None or not np.isfinite(c) else float(c),
-                distance_m=None if s is None or not np.isfinite(s) else float(s))
+                distance_m=distance(orb.info.get("step"), orb.info.get("inv_norm")))
 
 
 def orbits_from_points(sec, X0s, q, h_fd=None, polish=2):

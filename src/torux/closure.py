@@ -5,7 +5,8 @@ on, a certificate's lines) and every line of the chains the answer's family step
 
     closure_m    |P^q(x) - x|: how far from its stored crossing x the line comes back after its q field periods
     distance_m   |(M - I)^-1 (P^q(x) - x)|: Newton's step from x, the distance from x to the closed line of the map
-                 there (M the q-period map's Jacobian at x)
+                 there (M the q-period map's Jacobian at x), or what the map's own error leaves undetermined,
+                 |(M - I)^-1| MAP_ERR_M, where that is larger
     converged    distance_m <= CONVERGED_M
 
 with P the period map of torux.barrier.FieldSection (the edge barrier's accurate tracer: Gragg-Bulirsch-Stoer at a
@@ -14,16 +15,17 @@ crossings come from that map (the edge barrier's) has them from the map's own Ne
 solved as a closed curve by torux.orbits) is followed from x for its q periods, with its own monodromy where the
 record keeps it and by central differences otherwise.
 
-Where a residue is small (|residue| below about 1e-6: a thin chain) M - I is nearly singular, so distance_m is large
-however well the line closes: its crossings lie on its chain's curve, closing to closure_m, but its place along that
-curve is not determined, and it is not called converged.
+Where a residue is small (a thin chain) M - I is nearly singular, so distance_m is large however well the line
+closes: its crossings lie on its chain's curve, closing to closure_m, but its place along that curve is not
+determined, and it is not called converged.
 
 The lines the edge barrier's orbit search screened are its detection map's orbits polished by a few Newton steps:
 some are not converged (in torux 0.2.2, 29 of 157 came back more than 1e-4 m away and one residue read 36.85 for a
-line of 30.92).  measure_record follows each such line on with Newton, its steps at most POLISH_STEP_M, for at most
-POLISH_S seconds a record, and puts the closed line it reaches in its place (with polished: the move, and the
-residue and measure before) when that line is converged, has q distinct crossings and goes round the magnetic axis
-as often (p) as the line it replaces.  A chain's line (solved as a closed curve) that does not even close to
+line of 30.92), and a strongly hyperbolic line's residue changes so fast with its place that one converged to 1e-6 m
+can still be 1 % off.  measure_record follows each screened line farther than POLISH_ABOVE_M from its closed line on
+with Newton, its steps at most POLISH_STEP_M, for at most POLISH_S seconds a record, and puts the closed line it
+reaches in its place (with polished: the move, and the residue and measure before) when that line is converged and
+nearer, has q distinct crossings and goes round the magnetic axis as often (p) as the line it replaces.  A chain's line (solved as a closed curve) that does not even close to
 CLOSES_M is followed on the same way where its residue leaves Newton a well posed step (|residue| >= 1e-6), and
 replaced only by a closed line within CHAIN_MOVE_M of it.  A line that is still not converged keeps its measure, and
 torux.chainlist lists it with its chain only where it closes (closure_m <= CLOSES_M); otherwise it counts it in
@@ -45,6 +47,9 @@ POLISH_STEP_M = 1e-3       # the largest Newton step taken when a screened line 
 POLISH_IT = 30
 POLISH_S = 60.0            # seconds a record may spend bringing its lines to convergence
 CHAIN_MOVE_M = 1e-4        # a chain's line is replaced only by a closed line this near it (m)
+POLISH_ABOVE_M = 1e-9      # an edge barrier's screened line is followed on to its closed line when farther (m)
+NEWTON_STOP_M = 1e-11      # Newton stops at a step this small (m)
+MAP_ERR_M = 1e-10          # the error of the map over a line's q periods that distance_m allows for (m)
 SAME_POINT_M = 1e-8        # (torux.chainlist): crossings nearer each other than this are one point
 
 
@@ -124,9 +129,17 @@ def _section(engine, source, phi, x, sp=None):
     return sec, sp
 
 
-def _put(ln, closure, step):
+def distance(step, inv_norm):
+    """distance_m: Newton's step, or what the map's own error leaves undetermined (|(M - I)^-1| MAP_ERR_M), whichever
+    is larger; None where M - I is singular."""
+    if step is None or inv_norm is None or not (math.isfinite(step) and math.isfinite(inv_norm)):
+        return None
+    return float(max(step, inv_norm * MAP_ERR_M))
+
+
+def _put(ln, closure, step, inv_norm):
     ln["closure_m"] = None if closure is None or not math.isfinite(closure) else float(closure)
-    ln["distance_m"] = None if step is None or not math.isfinite(step) else float(step)
+    ln["distance_m"] = distance(step, inv_norm)
     ln["converged"] = bool(ln["distance_m"] is not None and ln["distance_m"] <= CONVERGED_M)
 
 
@@ -150,22 +163,23 @@ def _follow(sec, items):
             lost[act] |= lo
         for i, (ln, P, M) in enumerate(known):
             if lost[i]:
-                _put(ln, None, None)
+                _put(ln, None, None, None)
                 continue
             F = Y[i] - X[i]
             try:
-                s = float(np.linalg.norm(np.linalg.solve(np.asarray(M, float) - np.eye(2), F)))
+                Ai = np.linalg.inv(np.asarray(M, float) - np.eye(2))
+                s, inv = float(np.linalg.norm(Ai @ F)), float(np.linalg.norm(Ai, 2))
             except np.linalg.LinAlgError:
-                s = math.inf
-            _put(ln, float(np.linalg.norm(F)), s)
+                s = inv = math.inf
+            _put(ln, float(np.linalg.norm(F)), s, inv)
     if other:
         orbs = [BR.Orbit(len(P), P, np.eye(2)) for _, P in other]
         got = BR.orbits_many(sec, orbs, polish=0)
         for (ln, P), o in zip(other, got):
             if o is None:
-                _put(ln, None, None)
+                _put(ln, None, None, None)
             else:
-                _put(ln, o.info["closure"], o.info.get("step"))
+                _put(ln, o.info["closure"], o.info.get("step"), o.info.get("inv_norm"))
 
 
 def _newton(sec, x, q, until):
@@ -193,7 +207,7 @@ def _newton(sec, x, q, until):
             break
         if best is None or o.info["closure"] < best.info["closure"]:
             best = o
-        if o.info["step"] <= 1e-3 * CONVERGED_M:
+        if o.info["step"] <= NEWTON_STOP_M:
             break
         s = np.linalg.solve(o.M - np.eye(2), o.info["F"])
         n = float(np.linalg.norm(s))
@@ -212,7 +226,11 @@ def _polish(sec, ln, P, axis_point, until, max_move=None):
     q = len(P)
     best = _newton(sec, P[0], q, until)
     o = best
-    if o is None or not (o.info["step"] <= CONVERGED_M):
+    d_new = None if o is None else distance(o.info["step"], o.info["inv_norm"])
+    if d_new is None or not d_new <= CONVERGED_M:
+        return False
+    d_old = _num(ln.get("distance_m"))
+    if d_old is not None and not d_new < d_old:
         return False
     d = np.linalg.norm(o.pts[:, None, :] - o.pts[None, :, :], axis=-1)
     np.fill_diagonal(d, np.inf)
@@ -233,7 +251,7 @@ def _polish(sec, ln, P, axis_point, until, max_move=None):
                   crossing=[float(v) for v in P[0]])
     ln["section" if "section" in ln and "points" not in ln else "points"] = o.pts.tolist()
     ln["residue"] = float(o.residue)
-    _put(ln, o.info["closure"], o.info["step"])
+    _put(ln, o.info["closure"], o.info["step"], o.info["inv_norm"])
     ln["polished"] = dict(moved_m=float(np.linalg.norm(o.pts[0] - P[0])), before=before)
     return True
 
@@ -269,7 +287,7 @@ def measure(engine, source, items, axis_point=None, polish_s=POLISH_S, sp=None):
                 fol.append((ln, _pts(ln), M))
             _follow(sec, fol)
     until = time.time() + polish_s
-    for ln, ph, kind in sorted(items, key=lambda t: len(_pts(t[0]))):
+    for ln, ph, kind in sorted(items, key=lambda t: (bool(t[0].get("converged")), len(_pts(t[0])))):
         if _to_polish(ln, kind) and time.time() < until:
             sec = secs.get(round(ph, 12))
             if sec is not None:
@@ -280,12 +298,15 @@ def measure(engine, source, items, axis_point=None, polish_s=POLISH_S, sp=None):
 
 
 def _to_polish(ln, kind):
-    """An edge barrier's screened line that is not converged; a chain's line that does not even close to CLOSES_M,
-    where its residue (|residue| >= 1e-6) leaves Newton a well posed step."""
+    """An edge barrier's screened line more than POLISH_ABOVE_M from its closed line (a strongly hyperbolic line's
+    residue changes fast with its place: converged to 1e-6 m, it can still be 1 % off); a chain's line that is not
+    converged and does not even close to CLOSES_M, where its residue (|residue| >= 1e-6) leaves Newton a well posed
+    step."""
+    if kind == "screened":
+        d = _num(ln.get("distance_m"))
+        return d is None or d > POLISH_ABOVE_M
     if ln.get("converged") is not False:
         return False
-    if kind == "screened":
-        return True
     c, r = _num(ln.get("closure_m")), _num(ln.get("residue"))
     return kind == "chain" and (c is None or c > CLOSES_M) and r is not None and abs(r) >= 1e-6
 
