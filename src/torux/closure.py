@@ -122,8 +122,14 @@ def _section(engine, source, phi, x, sp=None):
     Bphi = -B[0, 0] * math.sin(phi) + B[0, 1] * math.cos(phi)
     sign = 1.0 if Bphi > 0 else -1.0
     if sp is None:
+        sp = getattr(source, "_closed_line_steps", None)
+    if sp is None:
         pts = np.array([[R, Z], [R * 0.98, Z], [R * 1.02, Z]])
         sp, _ = BR.calibrate_steps(engine, nfp, sign, pts)
+        try:
+            source._closed_line_steps = sp           # the same field's step, once for all its requests
+        except (AttributeError, TypeError):
+            pass
     sec = BR.FieldSection(engine, source, sign=sign, scale=0.5 * R, steps_per_period=sp, phi0=phi)
     sec.stop_on_err = True
     return sec, sp

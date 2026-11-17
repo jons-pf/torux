@@ -205,6 +205,8 @@ class _Search:
             entry["verified_lower_bound_Wb"] = rg.get("verified_lower_bound")
         entry["default_budget"] = bool(b >= self.default_budget(flux))
         entry["chains"] = [dict(c, request=len(self.log) + 1) for c in _chains(r)]
+        if (r.record or {}).get("closed_lines"):
+            entry["closed_lines"] = r.record["closed_lines"]     # what measuring its closed lines did and took
         self.log.append(entry)
         r._ask_entry = entry
         at = "no flux (the family from the axis)" if flux is None else _wb(float(flux))
@@ -940,7 +942,8 @@ def _crossed_stage(S, r):
     from .closure import measure_record
     # how well each of their closed lines closes (torux.closure), and where a line was moved to its closed line,
     # whether it still lies between the verified tori either side
-    measure_record(r._engine, S.src, dict(crossed=recs))
+    meas = dict(crossed=recs)
+    measure_record(r._engine, S.src, meas)
     C.recheck(recs, vt)
     from .chainlist import of_record
     k = next((i + 1 for i, x in enumerate(S.log) if x is e), None)
@@ -948,7 +951,8 @@ def _crossed_stage(S, r):
     e["chains"] = list(e.get("chains") or []) + [dict(c, request=k) for c in got]
     S.after = max(0.0, time.time() - S.deadline)
     e["crossed"] = dict(chains=len(got), cut=sum(1 for c in got if c.get("cut")), qmax=C.QMAX,
-                        verified_tori=len(vt), wall_s=round(time.time() - t, 1), after_budget_s=round(S.after, 1))
+                        verified_tori=len(vt), wall_s=round(time.time() - t, 1), after_budget_s=round(S.after, 1),
+                        **({"closed_lines": meas["closed_lines"]} if meas.get("closed_lines") else {}))
     S.crossed = (vt, r._engine, ax)
     _say(f"the answer's family stepped across {len(got)} chain{'s' if len(got) != 1 else ''} of q <= {C.QMAX} in "
          f"{e['crossed']['wall_s']:.0f} s")
