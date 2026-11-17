@@ -228,7 +228,7 @@ def symmetric_chain_lines(engine, source, axis, p, q, windows, deadline=None, ns
                 info.append(dict(plane=plane, side=side, R=float(R0), winding=float(wind), rejected="newton",
                                  res=float(ln.res)))
                 continue
-            ln = OR.line_monodromy(engine, ln)
+            ln = OR.line_monodromy(engine, ln, deadline=deadline)
             pts = ln.section_points(0.0)
             dup = any(np.min(np.linalg.norm(pts[:, None, :] - o_.section_points(0.0)[None], axis=-1)) < 1e-8
                       for o_ in lines)

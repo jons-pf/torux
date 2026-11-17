@@ -1177,7 +1177,8 @@ def certify_request(eng, cont, brackets, request, tol=3e-15, deadline=None, verb
         O, I = best
         c = island_band_certificate(T1r, T2r, I, O, request_flux=request)
         c.update(kind=c.get("kind") or "island_band", chain=(ch.p, ch.q), O_residue=O.residue,
-                 O_line=dict(residue=float(O.residue), points=O.section_points(0.0).tolist(), plane_phi=0.0),
+                 O_line=dict(residue=float(O.residue), points=O.section_points(0.0).tolist(), plane_phi=0.0,
+                             residue_err=O.info.get("residue_err")),
                  T1=torus_record(T1r), T2=torus_record(T2r),
                  island=dict(flux=float(I.flux), iota=float(I.iota), M=int(I.M), N=int(I.N), bn_off=float(I.bn_off)),
                  T1_bn=float(T1r.bn_off), T2_bn=float(T2r.bn_off))
@@ -1505,7 +1506,8 @@ def band_between(eng, cont, T1, T2, request, tol=3e-15, qmax=60, deadline=None, 
         ln, I = best
         c = island_band_certificate(T1r, T2r, I, ln, request_flux=request)
         c.update(kind="island_band", chain=(p, q), O_residue=float(ln.residue),
-                 O_line=dict(residue=float(ln.residue), points=ln.section_points(0.0).tolist(), plane_phi=0.0),
+                 O_line=dict(residue=float(ln.residue), points=ln.section_points(0.0).tolist(), plane_phi=0.0,
+                             residue_err=ln.info.get("residue_err")),
                  T1=torus_record(T1r),
                  T2=torus_record(T2r), island=dict(flux=float(I.flux), iota=float(I.iota), M=int(I.M), N=int(I.N),
                                                     bn_off=float(I.bn_off)))

@@ -115,7 +115,7 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
                 if verbose:
                     print(f"    chain {p}/{q} start theta0 {th0:.3f} phi0 {phi0:.3f}: not converged ({ln.res:.2e})")
                 continue
-            ln = OR.line_monodromy(engine, ln)
+            ln = OR.line_monodromy(engine, ln, deadline=deadline)
             pts = ln.section_points(0.0)
             if not distinct_crossings(pts):
                 # a line of lower period gone round q / d times (the magnetic axis is one): not a line of p/q

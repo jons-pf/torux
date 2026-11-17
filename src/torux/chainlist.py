@@ -83,6 +83,7 @@ def _base(p, q, nfp, found_in):
 def _line(ln, phi=None):
     out = {}
     _put(out, "residue", _num(ln.get("residue")))
+    _put(out, "residue_err", _num(ln.get("residue_err")))
     sec = ln.get("section", ln.get("points"))
     if sec is not None:
         out["section"] = [[float(v) for v in pt] for pt in sec]
@@ -384,6 +385,16 @@ def merge(lists):
     return out
 
 
+def _residue_errs(out, c):
+    """Each certificate line's residue_err (a bound on its residue's error, torux.orbits.line_monodromy), where the
+    record keeps one: the X line's, the O line's, the edge barrier's orbit's."""
+    src = dict(X=c.get("X_line") if isinstance(c.get("X_line"), dict) else c.get("orbit"), O=c.get("O_line"))
+    for ln in out.get("lines") or []:
+        s = src.get(ln.get("role"))
+        if isinstance(s, dict) and _num(s.get("residue_err")) is not None:
+            ln["residue_err"] = _num(s["residue_err"])
+
+
 def _pts(points):
     try:
         P = np.asarray(points, float).reshape(-1, 2)
@@ -401,8 +412,9 @@ def _cert_line(p, q, residue, points, plane_phi, ln=None):
 def provenance(c):
     """What a certificate record (one that holds: ok) rests on, for a reader with a tracer of their own: dict(
     construction, the theorem's name in docs/verification.md's words; lines, the closed field lines it is built on,
-    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane; interval_Wb or
-    bound_Wb). None for a record that does not hold. A lost ring rests on no closed line (lines [])."""
+    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane, and residue_err, a
+    bound on the residue's error, where the record keeps one; interval_Wb or bound_Wb). None for a record that does
+    not hold. A lost ring rests on no closed line (lines [])."""
     if not isinstance(c, dict) or not c.get("ok"):
         return None
     kind = str(c.get("kind") or "")
@@ -441,6 +453,7 @@ def provenance(c):
                     sub = provenance(c.get(k))
                     if sub is not None:
                         return dict(sub, **{k_: v for k_, v in out.items() if k_ not in sub})
+    _residue_errs(out, c)
     iv = c.get("interval")
     if isinstance(iv, (list, tuple)) and len(iv) == 2 and all(_num(v) is not None for v in iv):
         out["interval_Wb"] = sorted(abs(_num(v)) for v in iv)
