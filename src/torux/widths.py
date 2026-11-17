@@ -38,8 +38,17 @@ other side), the next request goes where the chain's edge is expected, from the 
 surfaces and the pendulum half width (torux.chains), kept within the middle half of the interval once a request has
 failed, so that the interval shrinks by a quarter at least each time.  The transform chooses where to ask and
 nothing more.  A side stops when the interval left is below REL of the bracket, after MAX_SIDE requests, or when
-the time ends.  Requests run each in its own process, ``jobs`` at a time (torux.batch), each with at most
-REQUEST_S seconds; the requests still running when widths_s ends are stopped and count as not verified.
+the time ends.  Chains beyond the last surface that share their inner surface and its nearest failure share one
+sequence of requests.  Requests run each in its own process, ``jobs`` at a time (torux.batch), each on cores of its
+own where the system allows (Processes) and with at most REQUEST_S seconds; the requests still running when widths_s
+ends are stopped and count as not verified.
+
+What the answer keeps.  Each chain with closed lines has 'bracket' (inner_Wb, outer_Wb, their iota, one_sided,
+half_width_Wb, flux_Wb, start_Wb the bracket before closing in, requests, stop per side, nearest_unverified_Wb the
+nearest fluxes towards the chain where no surface was verified, which bound nothing), and
+answer.evidence['search']['widths'] the budget, the time, every request with its outcome and the chains it placed,
+and the bracketing surfaces themselves (surfaces, named by each bracket's inner_surface and outer_surface) for a
+tracer of one's own.
 """
 from __future__ import annotations
 
