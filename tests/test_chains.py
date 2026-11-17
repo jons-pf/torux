@@ -375,3 +375,23 @@ def test_the_family_stalls_at_the_first_rational_it_meets():
     m = chainlist.merge([(1, [dict(fam[(-2, 13)], request=1)])])
     assert not m[0]["stalled_at"]
 
+
+def test_a_line_outside_a_section_that_folds_back_is_beyond_it():
+    """The edge barrier keeps a closed line beyond the last torus when every crossing lies outside its section. A
+    section that is not star-shaped about the axis point folds back across some rays: a point outside it, in the fold,
+    has its ray leave the section again farther out, so its ray ratio is below 1 (in 0.2.2 the line was dropped as
+    inside: at 90 degrees, I_IL / I_PF = 4.70 on CNT, the iota -6/19 X line, ratio 0.75)."""
+    import numpy as np
+    from torux.barrier import beyond_section, ray_ratio
+    # a section round the axis point (0, 0) with a notch cut down from its top, between R = 0.3 and 0.5: a ray from the
+    # axis point through the notch leaves the section, crosses the notch and enters the section again past it
+    C = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [0.5, 1.0], [0.5, 0.2], [0.3, 0.2], [0.3, 1.0], [-1.0, 1.0]])
+    notch = np.array([[0.4, 0.5], [0.42, 0.8]])
+    assert np.allclose(ray_ratio(C, np.zeros(2), notch), [0.5, 0.8])
+    assert beyond_section(C, notch) and beyond_section(C, [[1.5, 0.3]])
+    assert not beyond_section(C, [[0.0, 0.5]]) and not beyond_section(C, [[1.5, 0.3], [0.0, 0.5]])
+    # such a line is screened after those beyond the section on every ray, and never tried: the candidates are 0.2.2's
+    from torux.barrier import _order
+    ray, fold = types.SimpleNamespace(info=dict(ratio_min=1.2, ratio_mean=1.5)), \
+        types.SimpleNamespace(info=dict(ratio_min=0.75, ratio_mean=1.1, outside=True))
+    assert sorted([fold, ray], key=_order) == [ray, fold]
