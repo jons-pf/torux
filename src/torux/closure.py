@@ -25,11 +25,12 @@ line of 30.92), and a strongly hyperbolic line's residue changes so fast with it
 can still be 1 % off.  measure_record follows each screened line farther than POLISH_ABOVE_M from its closed line on
 with Newton, its steps at most POLISH_STEP_M, for at most POLISH_S seconds a record, and puts the closed line it
 reaches in its place (with polished: the move, and the residue and measure before) when that line is converged and
-nearer, has q distinct crossings and goes round the magnetic axis as often (p) as the line it replaces.  A chain's line (solved as a closed curve) that does not even close to
-CLOSES_M is followed on the same way where its residue leaves Newton a well posed step (|residue| >= 1e-6), and
-replaced only by a closed line within CHAIN_MOVE_M of it.  A line that is still not converged keeps its measure, and
-torux.chainlist lists it with its chain only where it closes (closure_m <= CLOSES_M); otherwise it counts it in
-lines_not_converged.
+nearer, has q distinct crossings and goes round the magnetic axis as often (p) as the line it replaces.  A chain's
+line (solved as a closed curve) that does not even close to CLOSES_M is followed on the same way where its residue
+leaves Newton a well posed step (|residue| >= 1e-6), and replaced only by a closed line within CHAIN_MOVE_M of it.  A
+line that is still not converged keeps its measure, and torux.chainlist lists it with its chain only where it closes
+(closure_m <= CLOSES_M); otherwise it counts it in lines_not_converged.  The orbits the edge barrier's search found on
+its detection map (orbits_found) are measured and kept as found: most are not converged, and no chain lists them.
 
 No certificate rests on these measures and none is changed by them: a certificate's own lines are measured, never
 moved.
