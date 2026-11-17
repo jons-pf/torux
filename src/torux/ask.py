@@ -240,8 +240,10 @@ class _Search:
                    flux_after=j.get("flux_after")) for j in ((r.record or {}).get("jumps") or []) if j.get("traced")]
         if tj:
             entry["traced"] = tj
-        # the chains its family stalled at with no torus beyond them (p, q)
-        st = [[j.get("p"), j.get("q")] for j in ((r.record or {}).get("jumps") or []) if not j.get("ok")]
+        # the chains its family stalled at with no torus beyond them (p, q): the rational it met first, where the
+        # jump tried the lowest-order one past it (the record's jumps keep that one)
+        st = [list(j.get("stalled_at") or [j.get("p"), j.get("q")]) for j in ((r.record or {}).get("jumps") or [])
+              if not j.get("ok")]
         if st:
             entry["stalled"] = st
         entry["chains"] = [dict(c, request=len(self.log) + 1) for c in _chains(r)]

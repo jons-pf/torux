@@ -3766,6 +3766,12 @@ def ray_ratio(T_poly, a, pts):
     return np.array(out)
 
 
+def beyond_section(T_poly, pts):
+    """Whether every point of pts (k, 2) lies outside the polygon T_poly, the last torus's section (even-odd rule).
+    Unlike ray_ratio > 1 this needs no section star-shaped about the axis point."""
+    return bool(not np.any(inside_polygon(T_poly, np.atleast_2d(pts))))
+
+
 def symmetric_roots_accurate(sec, q, roots, rel=1e-4, tol=1e-13, maxit=30):
     """Accurate symmetric periodic orbits from coarse roots (plane, side, R) of Z after q half periods on a
     symmetry line, all roots together: brackets [R -+ w scale] (w = rel, 8 rel, 64 rel until the accurate
@@ -3899,16 +3905,34 @@ def orbit_candidates(sec, T_last, a0, qs, n_scan=160, reach=0.7, deadline=None, 
             ps = rotation_numbers(sec, np.array([o_.pts[0] for o_ in new]), a0, q, tracer=coarse)
             for orb, p_ in zip(new, ps):
                 rat = ray_ratio(Tpoly0, a0, orb.pts)
-                orb.info.update(ratio_min=float(np.min(rat)), ratio_mean=float(np.mean(rat)))
+                # beyond T_last: every crossing outside its section.  The ray ratio (> 1 beyond the farthest place
+                # where the ray from the axis point leaves the section) says the same only for a section star-shaped
+                # about the axis point: at 90 degrees, I_IL / I_PF = 4.70 on CNT it put two crossings of the iota
+                # -6/19 X line, which lie outside, at 0.75 (the section folds back across their rays)
+                orb.info.update(ratio_min=float(np.min(rat)), ratio_mean=float(np.mean(rat)),
+                                outside=beyond_section(Tpoly0, orb.pts))
                 orb.p = p_
                 if verbose:
                     print(f"  q {q} plane {orb.info['plane']} side {orb.info['side']:+d} R {orb.info['R_sym']:.6f}: "
                           f"residue {orb.residue:.4g} p {orb.p} ratio {np.min(rat):.4f}-{np.max(rat):.4f} "
                           f"closure {orb.info['closure']:.1e} e_X {orb.e_X:.1e}", flush=True)
             cands.extend(new)
-    hyp = [o for o in cands if (o.residue < -1e-6 or o.residue > 1 + 1e-6) and o.info["ratio_min"] > 1.0]
-    hyp.sort(key=lambda o: o.info["ratio_mean"])
+    hyp = [o for o in cands if (o.residue < -1e-6 or o.residue > 1 + 1e-6) and _beyond(o)]
+    hyp.sort(key=_order)
     return hyp, cands
+
+
+def _beyond(o):
+    """Whether an orbit's crossings all lie outside T_last's section (orbit_candidates; an orbit recorded without that
+    test, by its ray ratio)."""
+    return bool(o.info["outside"]) if "outside" in o.info else o.info["ratio_min"] > 1.0
+
+
+def _order(o):
+    """The order orbits beyond T_last are screened in: innermost first (the mean ray ratio), those beyond the section on
+    every ray before those in a fold of it (ray ratio at most 1 somewhere), which 0.2.2 dropped, and which are screened
+    only where max_screen leaves room and never tried (_order(o)[0] True)."""
+    return (not o.info.get("ratio_min", np.inf) > 1.0, o.info.get("ratio_mean", np.inf))
 
 
 SECTION_STEPS = None        # macro steps per field period of FieldSection's accurate map: None = calibrated
@@ -4199,8 +4223,8 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                         o = Orbit(int(d["q"]), np.array(d["points"]), np.array(d["M"]), e_X=float(d["e_X"]), p=d["p"],
                                   info=dict(d["info"]))
                         allc.append(o)
-                    hyp = [o for o in allc if (o.residue < -1e-6 or o.residue > 1 + 1e-6) and o.info["ratio_min"] > 1.0]
-                    hyp.sort(key=lambda o: o.info["ratio_mean"])
+                    hyp = [o for o in allc if (o.residue < -1e-6 or o.residue > 1 + 1e-6) and _beyond(o)]
+                    hyp.sort(key=_order)
             except BarrierDeadline:
                 out["deadline_hit"] = "orbit search"
                 break
@@ -4250,7 +4274,7 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                 break
             out["timings"][f"screen{rnd}"] = time.time() - t0
             ranked = [p_ for p_ in pre if p_.get("ok") and p_.get("lost_c")]
-            ranked.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue, p_["orb"].info.get("ratio_mean", np.inf)))
+            ranked.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue, *_order(p_["orb"])))
             out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_.get("lost_c", {})),
                                      p=p_["orb"].p, points=p_["orb"].pts.tolist(), plane_phi=float(sec.phi0),
                                      **_measure(p_["orb"]), ratio=p_["orb"].info.get("ratio_mean"),
@@ -4260,7 +4284,10 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                                 dict(reason=p_.get("reason")) for p_ in pre]
             n_after = 0
             hit = False
-            phases = [ranked[:max_candidates]]
+            # a line in a fold of T_last's section (which 0.2.2 dropped) is screened and listed, not tried: trying it
+            # took the time the search had for its other requests (CNT at 88 degrees, I_IL / I_PF = 2.75: a verified
+            # surface 46 % smaller), so the candidates are those 0.2.2 tried, in its order
+            phases = [[p_ for p_ in ranked if not _order(p_["orb"])[0]][:max_candidates]]
             ph = 0
             while ph < len(phases):
                 queue = phases[ph]
@@ -4334,14 +4361,15 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                     # manifolds reach the lost region only after a long passage through the chaotic layer
                     try:
                         dl_x = None if deadline is None else time.time() + 0.3 * (deadline - time.time())
-                        gained = extend_shooting(sec, pre, deadline=deadline, deadline_detect=dl_x, verbose=verbose)
+                        # (the lines 0.2.2 screened: one in a fold of T_last's section is never tried)
+                        pre_x = [p_ for p_ in pre if p_.get("orb") is None or not _order(p_["orb"])[0]]
+                        gained = extend_shooting(sec, pre_x, deadline=deadline, deadline_detect=dl_x, verbose=verbose)
                     except BarrierDeadline:
                         gained = []
                         hit = True
                     out.setdefault("extended_shooting", []).append(dict(round=rnd, gained=len(gained)))
                     if gained:
-                        gained.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue,
-                                                    p_["orb"].info.get("ratio_mean", np.inf)))
+                        gained.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue, *_order(p_["orb"])))
                         out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_["lost_c"]),
                                                  p=p_["orb"].p, points=p_["orb"].pts.tolist(),
                                                  plane_phi=float(sec.phi0), **_measure(p_["orb"]),

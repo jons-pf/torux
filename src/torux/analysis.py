@@ -21,7 +21,7 @@ from . import axis as AX
 from . import budget as _budget
 from .envfail import environment_failure
 from .family import Continuation, refine_to_limit, FULL_CAPS
-from .chains import nearest_rational_ahead, analyse_chain, jump_over
+from .chains import nearest_rational_ahead, first_rational_ahead, analyse_chain, jump_over
 from .guard import resonance_guard
 from .torus import TorusState
 
@@ -882,10 +882,20 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             if pr is None:
                 break
             p, q = pr
+            # the rational the family meets first (q <= torux.crossed.QMAX, the order its crossings are listed to), where
+            # it lies short of the lowest-order one ahead: the chain the family stalled at, named and its lines found.
+            # The jump, and the certificates after it, go on from the lowest-order chain as before
+            from .crossed import QMAX as _QX
+            first = first_rational_ahead(last.iota, pr, source.nfp, qmax=_QX)
+            if first is not None:
+                # (a quarter of the family's time left at most, so that the lowest-order chain and its jump keep theirs)
+                d1 = None if fam_deadline is None else time.time() + 0.25 * max(0.0, fam_deadline - time.time())
+                ch1 = analyse_chain(eng, tori, first[0], first[1], verbose=verbose, deadline=d1, axis=ax)
+                out["chains"].append(dict(chain_record(ch1), stalled_at=True))
             # the chain's lines and the jump hold the family's deadline too: their closed-line and fixed-iota
             # Newton solves were never cut
             ch = analyse_chain(eng, tori, p, q, verbose=verbose, deadline=fam_deadline, axis=ax)
-            out["chains"].append(chain_record(ch))
+            out["chains"].append(dict(chain_record(ch), stalled_at=first is None))
             tj = None
             new = None
             direction = math.copysign(1.0, diota) if diota else 1.0
@@ -904,7 +914,8 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
                 from .beyond import stall
                 stall(traced, tori, ch, ax, direction, dmin)
             out["jumps"].append(dict(p=p, q=q, ok=new is not None, flux_after=None if new is None else new.flux,
-                                     **({} if tj is None else dict(traced=tj))))
+                                     **({} if tj is None else dict(traced=tj)),
+                                     **({} if first is None else dict(stalled_at=[int(first[0]), int(first[1])]))))
             brackets.append((tori[-1], ch, new))
             if new is None:
                 break

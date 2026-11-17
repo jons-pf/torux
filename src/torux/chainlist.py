@@ -28,10 +28,15 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
+    stalled_at      for a chain found in the family: True for the chain the family stalled at, the rational of order
+                    q <= torux.crossed.QMAX it meets first beyond its last torus; False for the lowest-order rational
+                    further ahead (torux.chains.nearest_rational_ahead), past that one, which the family's jump tried to
+                    cross. merge: True where any request's family stalled at it
     flux_from       how flux_Wb was had: 'between family tori' (linear in iota between the two tori either side of
                     the chain, family_Wb) or 'extrapolated' (beyond the family's last torus, from the torus at
                     family_Wb with the slope of iota over the family's last step)
     family_Wb       the family tori flux_Wb is from: the two either side, or the one it was extrapolated from
+    family_iota     for an extrapolated flux, the rotational transform of the torus it was extrapolated from
     between_verified_Wb  [inner, outer]: the fluxes of the verified surfaces with every crossing of the chain's lines
                     outside and inside them (outer None: no verified surface holds the chain), set by the search
                     (torux.crossed.annotate); for a stepped-across chain the two verified tori either side
@@ -196,12 +201,16 @@ def _family(c, nfp):
         out["lines_traced"] = int(c["traced_lines"])     # (torux.chains.traced_chain_lines) of its lines, found by tracing
     if c.get("cut"):
         out["cut"] = True            # the chain's line search was cut by the deadline
+    # the rational the family met first beyond its last torus (records before 0.3 name one chain a stall: that one)
+    out["stalled_at"] = bool(c.get("stalled_at", True))
     if "flux_Wb" in out:
         # torux.chains.analyse_chain: from the family torus nearest in iota with the slope of the family's step there
         out["flux_from"] = "extrapolated"
         at = c.get("shear_at") or {}
         if _num(at.get("flux")) is not None:
             out["family_Wb"] = [abs(_num(at["flux"]))]
+        if _num(at.get("iota")) is not None:
+            out["family_iota"] = [_num(at["iota"])]
     return out
 
 
@@ -400,6 +409,10 @@ def merge(lists):
         k_best, best = max(items, key=lambda kc: (_richness(kc[1]), -kc[0]))
         e = {kk: v for kk, v in best.items() if kk not in ("request",)}
         e["found_in"] = list(dict.fromkeys(c["found_in"] for _, c in items))
+        fam = [c for _, c in items if c["found_in"] == FAMILY]
+        if fam:
+            # the chain some request's family stalled at, met first beyond its last torus
+            e["stalled_at"] = any(c.get("stalled_at", True) for c in fam)
         e["found_by"] = sorted(set(k for k, _ in items))
         e["values_from"] = k_best
         out.append(e)

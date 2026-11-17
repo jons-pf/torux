@@ -68,6 +68,18 @@ def nearest_rational_ahead(iota, diota, nfp, qmax=40, window=0.05):
     return cands[0]
 
 
+def first_rational_ahead(iota, limit, nfp, qmax=30):
+    """The rational rho = p/q (q <= qmax) a family at iota meets first on its way to the rational limit (p, q): the
+    nearest to iota / nfp strictly between the two, or None where there is none.  nearest_rational_ahead names the
+    lowest-order rational ahead, which may lie past others: at 90 degrees, I_IL / I_PF = 4.70 the family of CNT stalls
+    at iota -0.31689, where it names -2/13 (iota -4/13) with -3/19 (iota -6/19) in between."""
+    rho, lim = iota / nfp, limit[0] / limit[1]
+    cands = rationals_between(rho, lim, qmax)
+    if not cands:
+        return None
+    return min(cands, key=lambda t: (abs(t[0] / t[1] - rho), t[1]))
+
+
 SAME_POINT_M = 1e-8     # crossings of one closed line nearer each other than this (m) are one point
 
 
