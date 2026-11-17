@@ -149,3 +149,14 @@ def test_the_search_keeps_every_surface_its_requests_verified():
     none = Result("undetermined", 1.0, 0.0)
     assert [ask._verified_torus(r) is not None for r in (ok, late, rng, bad, none)] == [True, True, True, False,
                                                                                        False]
+
+
+def test_a_band_cut_at_a_surface_never_holds_it_by_a_rounding():
+    """The middle and half of a cut band are rounded so that its ends never pass the surfaces that cut it (on CNT 13
+    cut bands held their surface by 1e-16 relative before)."""
+    rng = np.random.default_rng(3)
+    for _ in range(2000):
+        lo = float(rng.uniform(1e-5, 1e-2))
+        hi = lo * (1 + float(rng.uniform(1e-12, 1.0)))
+        m, h = bands.middle(lo, hi)
+        assert m - h >= lo and m + h <= hi and h >= 0.5 * (hi - lo) * (1 - 1e-12)

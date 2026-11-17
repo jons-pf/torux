@@ -183,7 +183,7 @@ def fit_chain(c, surfaces):
                 did = "withdrawn"
             elif lo_b > f - h or hi_b < f + h:
                 c["flux_estimate_Wb"], c["half_width_pendulum_Wb"] = f, h
-                c["flux_Wb"], c["half_width_Wb"] = 0.5 * (lo_b + hi_b), 0.5 * (hi_b - lo_b)
+                c["flux_Wb"], c["half_width_Wb"] = middle(lo_b, hi_b)
                 c["band_cut_Wb"] = [lo_b if lo_b > f - h else None, hi_b if hi_b < f + h else None]
                 c.pop("band_withdrawn", None)
                 did = "cut"
@@ -231,6 +231,15 @@ def _bracket(br, lo, hi, unplaced, pl):
         br["half_width_Wb"], br["flux_Wb"] = 0.5 * (b - a), 0.5 * (a + b)
     else:
         br["half_width_Wb"] = br["flux_Wb"] = None
+
+
+def middle(lo, hi):
+    """(middle, half) of the interval [lo, hi], the half rounded down so that middle -+ half never passes lo or hi
+    (a band cut at a surface then never holds it by a rounding)."""
+    m, h = 0.5 * (lo + hi), 0.5 * (hi - lo)
+    while h > 0 and (m - h < lo or m + h > hi):
+        h = float(np.nextafter(h, 0.0))
+    return m, h
 
 
 def _withdraw(c, f, h, why):
