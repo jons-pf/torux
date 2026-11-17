@@ -1092,13 +1092,22 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
         return out
 
 
+def _monodromy(line):
+    """The q-period map's Jacobian at a closed line's first crossing of phi = 0, as its record keeps it (torux.closure
+    measures how well the line closes with it), {} where the line has none."""
+    M = getattr(line, "monodromy", None)
+    if M is None or getattr(line, "phi0", 0.0) != 0.0:
+        return {}
+    return dict(monodromy=np.asarray(M, float).tolist())
+
+
 def chain_record(ch):
     """A chain the family met (torux.chains.Chain), as the record keeps it: p/q, the resonance's iota, flux and shear,
     the pendulum half width, and each closed line's residue, Newton residual and crossings (R, Z) of the plane
     phi = 0 (R0 the first of them). shear_at: the family torus the shear was taken at."""
     return dict(p=ch.p, q=ch.q, iota_r=ch.iota_r, flux_r=ch.flux_r, shear=ch.shear, half_width_est=ch.half_width_est,
                 lines=[dict(residue=l.residue, R0=l.section_points(0.0)[0].tolist(), res=l.res,
-                            section=l.section_points(0.0).tolist()) for l in ch.lines],
+                            section=l.section_points(0.0).tolist(), **_monodromy(l)) for l in ch.lines],
                 **({"shear_at": ch.info["shear_at"]} if ch.info.get("shear_at") else {}),
                 **({"lower_period": int(ch.info["lower_period"])} if ch.info.get("lower_period") else {}),
                 **({"cut": True} if ch.info.get("cut") else {}))

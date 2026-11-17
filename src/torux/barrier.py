@@ -1210,6 +1210,16 @@ class Orbit:
         return dict(lam=float(w[iu]), mu=float(w[is_]), vu=vu, vs=vs, reflection=bool(w[iu] < 0))
 
 
+def _newton_step(M, F):
+    """|(M - I)^-1 F|: Newton's step from a point whose q-period map moves it by F (M the map's Jacobian there), the
+    distance from the point to the closed line of the map near it (inf where M - I is singular)."""
+    try:
+        s = float(np.linalg.norm(np.linalg.solve(np.asarray(M, float) - np.eye(2), np.asarray(F, float))))
+    except np.linalg.LinAlgError:
+        return float("inf")
+    return s if np.isfinite(s) else float("inf")
+
+
 def orbit_from_point(sec, x0, q, h_fd=None, d=+1, polish=2):
     """Orbit through x0 (an approximate period-q point): Newton polish x0 <- x0 - (M - I)^-1 (P^q x0 - x0)
     (polish iterations, kept only while the closure decreases), points, closure, monodromy (central
@@ -1232,6 +1242,14 @@ def orbit_from_point(sec, x0, q, h_fd=None, d=+1, polish=2):
     if best is not None:
         best.info.pop("F", None)
     return best
+
+
+def _measure(orb):
+    """How well an orbit's stored points close on the map that found them (torux.closure): closure_m, |P^q(x) - x|
+    at its first point x, and distance_m, Newton's step from x."""
+    c, s = orb.info.get("closure"), orb.info.get("step")
+    return dict(closure_m=None if c is None or not np.isfinite(c) else float(c),
+                distance_m=None if s is None or not np.isfinite(s) else float(s))
 
 
 def orbits_from_points(sec, X0s, q, h_fd=None, polish=2):
@@ -1274,7 +1292,8 @@ def orbits_from_points(sec, X0s, q, h_fd=None, polish=2):
                 nrm = np.inf
             P_ = np.array([p_[m] for p_ in pts])
             best[i] = Orbit(q, P_, M, e_X=2.0 * nrm * (clos + tau[m]),
-                            info=dict(closure=clos, tau_q=float(tau[m]), inv_norm=nrm, det=float(np.linalg.det(M))))
+                            info=dict(closure=clos, tau_q=float(tau[m]), inv_norm=nrm, det=float(np.linalg.det(M)),
+                                      step=_newton_step(M, F)))
             if it == polish or clos < 1e-14 * sec.scale or not np.isfinite(nrm):
                 alive[i] = False
                 continue
@@ -1319,7 +1338,8 @@ def _orbit_once(sec, x0, q, h_fd=None):
         nrm = np.inf
     eX = 2.0 * nrm * (clos + tau)
     return Orbit(q, np.array(pts), M, e_X=eX, info=dict(closure=clos, tau_q=tau, inv_norm=nrm,
-                                                        det=float(np.linalg.det(M)), F=y[0] - x0))
+                                                        det=float(np.linalg.det(M)), F=y[0] - x0,
+                                                        step=_newton_step(M, y[0] - x0)))
 
 
 # ============================================================================ manifold growth
@@ -2790,7 +2810,8 @@ def orbits_many(sec, orbs, polish=3, h_fd=None):
             except np.linalg.LinAlgError:
                 nrm = np.inf
             info = dict(orbs[i].info)
-            info.update(closure=clos, tau_q=float(tau[m]), inv_norm=nrm, det=float(np.linalg.det(M)))
+            info.update(closure=clos, tau_q=float(tau[m]), inv_norm=nrm, det=float(np.linalg.det(M)),
+                        step=_newton_step(M, F))
             best[i] = Orbit(int(qs[i]), np.array(pts[m]), M, e_X=2.0 * nrm * (clos + tau[m]), p=orbs[i].p, info=info)
             if it == polish or clos < 1e-14 * sec.scale or not np.isfinite(nrm):
                 alive[i] = False
@@ -3121,7 +3142,8 @@ def barrier_from_orbit(sec, orb, a, want="edge", deadline=None, verbose=False, s
     lam = abs(eig["lam"])
     out = dict(kind=kind_, ok=False,
                orbit=dict(q=int(orb.q), p=orb.p, residue=orb.residue, lam=eig["lam"], e_X=orb.e_X,
-                          points=orb.pts.tolist(), info={k: v for k, v in orb.info.items() if np.isscalar(v)}))
+                          points=orb.pts.tolist(), info={k: v for k, v in orb.info.items() if np.isscalar(v)},
+                          **_measure(orb)))
     scale = sec.scale
     dmax = dmax if dmax is not None else 1e-2 * scale     # spacing; the arcs used are validated/refined later
     target = target if target is not None else 2e-6 * scale
@@ -4230,7 +4252,7 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
             ranked.sort(key=lambda p_: (abs(p_["orb"].residue) < min_abs_residue, p_["orb"].info.get("ratio_mean", np.inf)))
             out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_.get("lost_c", {})),
                                      p=p_["orb"].p, points=p_["orb"].pts.tolist(), plane_phi=float(sec.phi0),
-                                     ratio=p_["orb"].info.get("ratio_mean"),
+                                     **_measure(p_["orb"]), ratio=p_["orb"].info.get("ratio_mean"),
                                      start_ok={k: bool(v.get("ok")) for k, v in p_.get("loc", {}).items()},
                                      delta0={k: v.get("delta0") for k, v in p_.get("loc", {}).items()},
                                      e_X=p_["orb"].e_X) if p_.get("ok") else
@@ -4321,7 +4343,7 @@ def edge_barrier(engine, source, T_last, request=None, deadline=None, verbose=Fa
                                                     p_["orb"].info.get("ratio_mean", np.inf)))
                         out["screened"] += [dict(q=p_["orb"].q, residue=p_["orb"].residue, lost=sorted(p_["lost_c"]),
                                                  p=p_["orb"].p, points=p_["orb"].pts.tolist(),
-                                                 plane_phi=float(sec.phi0),
+                                                 plane_phi=float(sec.phi0), **_measure(p_["orb"]),
                                                  ratio=p_["orb"].info.get("ratio_mean"), extended=True) for p_ in gained]
                         phases.append(gained[:max_candidates])
             if hit:

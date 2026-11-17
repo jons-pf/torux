@@ -13,7 +13,13 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
     O, X            its elliptic and hyperbolic closed lines: residue, and section, the line's crossings (R, Z) of
                     the plane at cylindrical angle plane_phi (radians). A line whose q crossings are fewer than q
                     distinct points (the magnetic axis gone round q times) is not one of them: lines_of_lower_period
-                    counts those left out, and the half width is the chain's own elliptic line's or none
+                    counts those left out, and the half width is the chain's own elliptic line's or none.  Each
+                    line measured (torux.closure) says how well it closes: closure_m, how far from its first
+                    crossing it comes back after q field periods, distance_m, Newton's step from there (the distance
+                    to the closed line), converged (distance_m <= torux.closure.CONVERGED_M), and polished where the
+                    edge barrier's line was brought to convergence (its move, and its residue and measure before).
+                    A line neither converged nor closing to torux.closure.CLOSES_M is no line of the chain: it is
+                    left out and counted in lines_not_converged
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
@@ -82,7 +88,39 @@ def _line(ln, phi=None):
     elif ln.get("R0") is not None:
         out["section"] = [[float(v) for v in ln["R0"]]]
         out["plane_phi"] = 0.0
+    _measure(out, ln)
     return out
+
+
+def _measure(out, ln):
+    """How well the line closes (torux.closure), where it was measured: closure_m, distance_m, converged, and
+    polished when the stored line was brought to convergence."""
+    if "converged" in ln:
+        out["closure_m"] = _num(ln.get("closure_m"))
+        out["distance_m"] = _num(ln.get("distance_m"))
+        out["converged"] = bool(ln["converged"])
+    if isinstance(ln.get("polished"), dict):
+        out["polished"] = ln["polished"]
+    return out
+
+
+def _listed(ln):
+    """Whether a closed line is listed with its chain: converged, or not measured, or (a thin chain's line, whose
+    place along its curve is not determined) closing to torux.closure.CLOSES_M. A line that does neither is no closed
+    line of the chain: the chain counts it in lines_not_converged."""
+    from .closure import CLOSES_M
+    if "converged" not in ln or ln["converged"]:
+        return True
+    c = _num(ln.get("closure_m"))
+    return c is not None and c <= CLOSES_M
+
+
+def _not_converged(out, lines):
+    """lines without those not listed (_listed), counted in out['lines_not_converged']."""
+    keep = [ln for ln in lines if _listed(ln)]
+    if len(keep) < len(lines):
+        out["lines_not_converged"] = out.get("lines_not_converged", 0) + len(lines) - len(keep)
+    return keep
 
 
 def _elliptic(res):
@@ -114,7 +152,7 @@ def _family(c, nfp):
     _put(out, "flux_Wb", None if _num(c.get("flux_r")) is None else abs(_num(c.get("flux_r"))))
     _put(out, "half_width_Wb", _num(c.get("half_width_est")))
     _put(out, "shear", _num(c.get("shear")))
-    lines = [ln for ln in (c.get("lines") or []) if isinstance(ln, dict)]
+    lines = _not_converged(out, [ln for ln in (c.get("lines") or []) if isinstance(ln, dict)])
     other = [ln for ln in lines if not _own(ln, out["q"])]
     if other:
         # a line of lower period (the axis gone round q times) is not the chain's: left out, and the half width that
@@ -158,7 +196,7 @@ def _crossed(c, nfp):
         out["family_Wb"] = fam
     _put(out, "half_width_Wb", _num(c.get("half_width_est")))
     _put(out, "shear", _num(c.get("shear")))
-    lines = [ln for ln in (c.get("lines") or []) if isinstance(ln, dict)]
+    lines = _not_converged(out, [ln for ln in (c.get("lines") or []) if isinstance(ln, dict)])
     own = [ln for ln in lines if _own(ln, out["q"])]
     if c.get("lower_period"):
         out["lines_of_lower_period"] = int(c["lower_period"])
@@ -239,13 +277,16 @@ def _edge(c, nfp):
         e = chains.setdefault((e["p"], e["q"]), dict(e, O=[], X=[], certified=False))
         e["certified"] = bool(e["certified"] or t.get("ok"))
         res = _num(t.get("residue"))
-        if (e["p"], e["q"], res) in lines:
-            continue                 # the same line screened and then tried
+        if (e["p"], e["q"], res) in lines or t.get("points") is None:
+            continue                 # the same line screened and then tried (a candidate tried keeps no crossings)
         if not _own(t, e["q"]):
             e["lines_of_lower_period"] = e.get("lines_of_lower_period", 0) + 1
             continue
         lines.add((e["p"], e["q"], res))
-        e["O" if _elliptic(res) else "X"].append(_line(dict(residue=res, points=t.get("points")),
+        if not _listed(t):
+            e["lines_not_converged"] = e.get("lines_not_converged", 0) + 1
+            continue
+        e["O" if _elliptic(res) else "X"].append(_line(dict(t, residue=res, points=t.get("points")),
                                                        phi=t.get("plane_phi", 0.0)))
     return list(chains.values())
 
@@ -347,10 +388,10 @@ def _pts(points):
     return [[float(v) for v in pt] for pt in P] if len(P) else None
 
 
-def _cert_line(p, q, residue, points, plane_phi):
+def _cert_line(p, q, residue, points, plane_phi, ln=None):
     out = dict(p=_int(p), q=_int(q), residue=_num(residue), plane_phi=float(plane_phi or 0.0))
     out["crossings"] = _pts(points)
-    return out
+    return _measure(out, ln or {})
 
 
 def provenance(c):
@@ -367,20 +408,20 @@ def provenance(c):
     out = dict(construction=kind, lines=[])
     if kind.startswith("island_band_manifold_pairs"):
         out["construction"] = "manifold island band, from pairs of hyperbolic orbits"
-        out["lines"] = [_cert_line(p, q, o.get("residue"), o.get("points"), c.get("phi_s"))
+        out["lines"] = [_cert_line(p, q, o.get("residue"), o.get("points"), c.get("phi_s"), o)
                         for o in c.get("X_orbits") or [] if isinstance(o, dict)]
     elif kind.startswith("island_band_manifold"):
         out["construction"] = "manifold island band"
         for key in ("X_line", "O_line"):
             ln = c.get(key)
             if isinstance(ln, dict):
-                out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), c.get("phi_s")),
+                out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), c.get("phi_s"), ln),
                                          role=key[0]))
     elif kind == "island_band":
         out["construction"] = "island band from island tori"
         ln = c.get("O_line")
         if isinstance(ln, dict):
-            out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), ln.get("plane_phi")),
+            out["lines"].append(dict(_cert_line(p, q, ln.get("residue"), ln.get("points"), ln.get("plane_phi"), ln),
                                      role="O"))
     elif kind.startswith(("edge", "manifold_band")):
         if c.get("certificate") == "lost_ring":
@@ -390,7 +431,7 @@ def provenance(c):
             orb = c.get("orbit")
             if isinstance(orb, dict):
                 out["lines"].append(dict(_cert_line(orb.get("p"), orb.get("q"), orb.get("residue"), orb.get("points"),
-                                                    c.get("plane_phi")), role="X"))
+                                                    c.get("plane_phi"), orb), role="X"))
             else:
                 for k in ("edge_barrier", "survivor"):
                     sub = provenance(c.get(k))

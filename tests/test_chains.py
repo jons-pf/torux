@@ -4,6 +4,7 @@ are as torux.analysis writes them."""
 import types
 
 import numpy as np
+import pytest
 
 from torux import api, ask, chainlist, chains
 from torux.analysis import chain_record
@@ -234,3 +235,87 @@ def test_a_certificate_says_what_it_rests_on():
                                     O_line=dict(residue=0.2, points=pts, plane_phi=0.0)))
     assert old["construction"] == "island band from island tori" and old["lines"][0]["crossings"] == pts
     assert chainlist.provenance(dict(edge, ok=False)) is None
+
+
+def test_a_line_says_how_well_it_closes_and_one_that_does_not_close_is_left_out():
+    """Each line measured by torux.closure carries closure_m, distance_m and converged into the chain list and a
+    certificate's provenance; a line neither converged nor closing to torux.closure.CLOSES_M (an edge barrier's line
+    left millimetres from its closed line) is no line of its chain and is counted, and a thin chain's line that closes
+    but whose place along its curve is not determined stays, not called converged."""
+    from torux.closure import CLOSES_M, CONVERGED_M
+    good = dict(q=5, p=-2, residue=-0.41, points=_points(5, 0.1), plane_phi=0.0, closure_m=3e-12, distance_m=4e-12,
+                converged=True)
+    far = dict(q=7, p=-3, residue=36.85, points=_points(7, 0.12), plane_phi=0.0, closure_m=8e-3, distance_m=8.8e-3,
+               converged=False)
+    moved = dict(q=7, p=-3, residue=-0.928, points=_points(7, 0.13), plane_phi=0.0, closure_m=1e-14,
+                 distance_m=2e-15, converged=True, polished=dict(moved_m=8.9e-6, before=dict(residue=-0.9258)))
+    edge = dict(kind="edge_barrier", ok=False, plane_phi=0.0, screened=[good, far, moved],
+                candidates=[dict(q=7, p=-3, residue=36.85, ok=False, reason="not lost")])
+    e = {c["q"]: c for c in chainlist.of_record(dict(nfp=NFP, certificate=edge))}
+    assert [x["residue"] for x in e[5]["X"]] == [-0.41] and e[5]["X"][0]["converged"]
+    assert e[5]["X"][0]["closure_m"] == 3e-12 and e[5]["X"][0]["distance_m"] == 4e-12
+    assert [x["residue"] for x in e[7]["X"]] == [-0.928] and e[7]["lines_not_converged"] == 1
+    assert e[7]["X"][0]["polished"]["moved_m"] == 8.9e-6
+    thin = dict(residue=1.8e-9, section=_points(6, 0.01), closure_m=0.1 * CLOSES_M, distance_m=1e3 * CONVERGED_M,
+                converged=False)
+    off = dict(residue=0.05, section=_points(6, 0.02), closure_m=10 * CLOSES_M, distance_m=10 * CONVERGED_M,
+               converged=False)
+    fam = chainlist.of_record(dict(nfp=NFP, chains=[dict(p=-1, q=6, iota_r=-1 / 3, flux_r=-0.00145, shear=-3.3,
+                                                         lines=[thin, off])]))[0]
+    assert [x["residue"] for x in fam["O"]] == [1.8e-9] and not fam["O"][0]["converged"]
+    assert fam["lines_not_converged"] == 1
+    pv = chainlist.provenance(dict(kind="edge_barrier", ok=True, certificate="manifold", F_up=0.02, plane_phi=0.0,
+                                   orbit=dict(good)))
+    assert pv["lines"][0]["converged"] and pv["lines"][0]["distance_m"] == 4e-12
+
+
+@pytest.mark.slow
+def test_an_edge_barrier_line_left_millimetres_from_its_closed_line_is_brought_to_it(tmp_path):
+    """CNT at 90 degrees, interlinked coils centred at +-0.34425 m, I_IL / I_PF = 2.40: torux 0.2.2's edge barrier
+    stored an iota = -3/8 line (q = 16) with residue 36.854 that comes back 8 mm from its crossing after 16 periods.
+    torux.closure measures it so, follows it with Newton to the closed line 5.0 mm away, residue 30.9168 (an
+    independent tracer: 30.916815), and the chain list then holds that line, converged, with what it replaced."""
+    import json
+    import torux
+    from torux.closure import CONVERGED_M, measure
+    from torux.field import FieldEngine
+    s, c = np.sin(np.radians(45.0)), np.cos(np.radians(45.0))
+    a, d, ipf, iil = 0.405, 0.34425, 10469.555, 25126.932
+    coils = [dict(xc=[d, a], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, a * s], zc=[0.0, 0.0], zs=[0.0, -a * c],
+                  current_A=iil),
+             dict(xc=[-d, -a], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, a * s], zc=[0.0, 0.0], zs=[0.0, a * c],
+                  current_A=-iil),
+             dict(xc=[0.0, 1.08], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, 1.08], zc=[0.405, 0.0], zs=[0.0, 0.0],
+                  current_A=-ipf),
+             dict(xc=[0.0, 1.08], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, -1.08], zc=[-0.405, 0.0], zs=[0.0, 0.0],
+                  current_A=ipf)]
+    path = tmp_path / "cnt90.json"
+    path.write_text(json.dumps(dict(nfp=2, stellarator_symmetric=True, coils=coils)))
+    src = torux.load(str(path))
+    stored = [
+          [0.13671087260630477, 0.024407669785918566],
+          [0.08628096387271104, 0.1971778162654607],
+          [0.23795940372874386, 0.20800461641574625],
+          [0.22056399931450385, -0.2395998784555492],
+          [0.0754329395189476, -0.1834428602903634],
+          [0.13221910294492017, -0.0011205112281504276],
+          [0.0762004884890356, 0.1806403308128552],
+          [0.21582580329349446, 0.24519150936643946],
+          [0.24363746440627612, -0.19479090043535732],
+          [0.09278077182064481, -0.20193012608115515],
+          [0.13873420469912057, -0.033967864676247905],
+          [0.11175210809677075, 0.12779168171233582],
+          [0.12921966010475622, 0.29671657015706143],
+          [0.29504912540877437, 0.01721841528543905],
+          [0.1380605034567579, -0.31470025422344194],
+          [0.09589761033373585, -0.14098984157157435]]
+    ln = dict(q=16, p=-3, residue=36.85391858406757, points=stored, plane_phi=0.0)
+    measure(FieldEngine(src, dmin=0.05), src, [(ln, 0.0, "screened")], axis_point=[0.22988850487658802, 0.0], polish_s=120)
+    assert ln["converged"] and ln["distance_m"] <= CONVERGED_M and abs(ln["residue"] - 30.916815) < 1e-4, ln
+    before = ln["polished"]["before"]
+    assert before["residue"] == 36.85391858406757 and before["closure_m"] > 7e-3 and not before["distance_m"] < 1e-3
+    assert abs(ln["polished"]["moved_m"] - 5.03e-3) < 5e-5
+    edge = dict(kind="edge_barrier", ok=False, plane_phi=0.0, screened=[ln])
+    got = chainlist.of_record(dict(nfp=NFP, certificate=edge))[0]
+    assert [round(x["residue"], 4) for x in got["X"]] == [30.9168] and got["X"][0]["converged"]
+    assert "lines_not_converged" not in got

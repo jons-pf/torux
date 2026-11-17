@@ -149,6 +149,11 @@ def solve(source, flux=None, *, budget_s=None, tol=3e-15, verify=True, trace_lin
     with B.scope(deadline):
         out = _solve(req, src, surfs, budget, t0, deadline)
     _truthful(out, req)
+    if out._engine is not None and out.record:
+        from .closure import measure_record
+        # how well each closed line the record keeps closes, and the edge barrier's screened lines brought to
+        # convergence where they can be (torux.closure), before the chains are read from it
+        measure_record(out._engine, src, out.record)
     try:
         from .chainlist import of_record
         # the island chains the request identified, whatever its outcome (torux.chainlist)

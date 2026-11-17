@@ -937,6 +937,11 @@ def _crossed_stage(S, r):
         return
     if recs is None:
         return
+    from .closure import measure_record
+    # how well each of their closed lines closes (torux.closure), and where a line was moved to its closed line,
+    # whether it still lies between the verified tori either side
+    measure_record(r._engine, S.src, dict(crossed=recs))
+    C.recheck(recs, vt)
     from .chainlist import of_record
     k = next((i + 1 for i, x in enumerate(S.log) if x is e), None)
     got = of_record(dict(nfp=S.src.nfp, crossed=recs))

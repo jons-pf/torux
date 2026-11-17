@@ -113,7 +113,9 @@ def place(lines, verified):
 
 
 def _line_record(ln, phi=0.0):
-    return dict(residue=float(ln.residue), res=float(ln.res), section=line_points(ln, phi)[0].tolist(), plane_phi=phi)
+    from .analysis import _monodromy
+    return dict(residue=float(ln.residue), res=float(ln.res), section=line_points(ln, phi)[0].tolist(), plane_phi=phi,
+                **(_monodromy(ln) if phi == 0.0 else {}))
 
 
 def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, deadline=None, exclude=(),
@@ -249,6 +251,19 @@ def stage(r, source, deadline, qmax=QMAX, verbose=False):
                               deadline=deadline, verified=verified, verbose=verbose)
     vt = [r.surface] + [t for ok, t in verified.values() if ok and t is not None]
     return recs, vt, ax
+
+
+def recheck(recs, verified):
+    """After torux.closure moved a chain's line to its closed line (polished), whether its lines still lie between
+    the two verified tori either side (between_verified), checked again with the tori the stage verified."""
+    by = {abs(float(T.flux)): T for T in verified}
+    for c in recs or []:
+        lines = [ln for ln in c.get("lines") or [] if isinstance(ln, dict)]
+        if c.get("between_verified") is None or not any(ln.get("polished") for ln in lines):
+            continue
+        lo, hi = by.get(c.get("inner_Wb")), by.get(c.get("outer_Wb"))
+        c["between_verified"] = bool(lo is not None and hi is not None and between(lines, lo, hi))
+    return recs
 
 
 def annotate(chains, verified, *_):
