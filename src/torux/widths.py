@@ -153,6 +153,7 @@ class _Chain:
         self.asked = {"inner": 0, "outer": 0}
         self.stop = {"inner": None, "outer": None}
         self.start = None                        # the bracket before closing in
+        self.span0 = {}                          # side -> its interval when first asked (one-sided chains)
         self.core_s = 0.0
 
     def key(self):
@@ -251,7 +252,9 @@ class Stage:
         if two:
             tol = REL * (ch.outer.flux - ch.inner.flux)
         else:
-            tol = REL * (2 * ch.h if ch.h is not None else abs(u - a))
+            # (one-sided: of the chain's expected width, else of the interval as it first was)
+            ch.span0.setdefault(s, abs(u - a))
+            tol = REL * (2 * ch.h if ch.h is not None else ch.span0[s])
         tol = max(tol, 1e-9 * a)
         return a, u, bool(blk), tol
 
@@ -295,6 +298,21 @@ class Stage:
             return None
         return 0.5 * (pts[i] + pts[i + 1])
 
+    def _shared(self, ch, s):
+        """Whether another side searches the same interval with a request running: chains beyond the last surface
+        share their inner surface and its nearest failure, and one sequence of requests serves them all."""
+        a, u, _, _ = self._interval(ch, s)
+        for f, (c2, s2) in self.pending.items():
+            if c2 is ch and s2 == s:
+                return False
+        for f, (c2, s2) in self.pending.items():
+            if c2 is ch or c2.inner is None or (s2 == "outer" and c2.outer is None):
+                continue
+            a2, u2, _, _ = self._interval(c2, s2)
+            if abs(a2 - a) <= 1e-13 * a and abs(u2 - u) <= 1e-13 * abs(u):
+                return True
+        return False
+
     # ------------------------------------------------------------- the loop
     def run(self, runner, deadline, request_s=REQUEST_S):
         """Close in until every side is done or the deadline: runner.start(flux, budget), runner.poll() -> [(flux,
@@ -319,6 +337,8 @@ class Stage:
                             continue
                         f = self.next_flux(ch, s)
                         if f is None or any(abs(f - x) <= 1e-12 * f for x in list(self.pending) + list(self.failed)):
+                            continue
+                        if self._shared(ch, s):
                             continue
                         best = (k, ch, s, f)
                     if best is None:
@@ -359,6 +379,12 @@ class Stage:
         if ch is not None and wall is not None:
             ch.core_s += wall
         ok = ans is not None and verified(ans)
+        if not ok and ans is not None:
+            from .ask import _why
+            try:
+                entry["why"] = _why(ans)
+            except Exception:  # noqa: BLE001
+                pass
         if ok and self.axis is not None:
             from .analysis import torus_topology
             try:
@@ -419,21 +445,52 @@ class Stage:
         return out
 
 
-def surface_dict(s):
-    """A surface as torux.Result.to_dict writes it: its Fourier coefficients, for a tracer of one's own."""
-    return dict(nfp=int(s.nfp), M=int(s.M), N=int(s.N), iota=float(s.iota), flux_Wb=float(s.flux),
-                phi0=float(getattr(s, "phi0", 0.0)),
-                **{k: np.asarray(getattr(s, k)).tolist() for k in ("rc", "rs", "zc", "zs") if hasattr(s, k)})
+SURFACE_M = 1e-16        # m: the bracketing surfaces kept in the answer, their coefficients to this
+
+
+def surface_dict(s, eps=SURFACE_M):
+    """A surface as torux.Result.to_dict writes it, for a tracer of one's own: its Fourier coefficients, each to eps
+    (m), and only the modes up to the last above eps in m and |n|. dropped_m bounds what that leaves out at any point
+    (the sum of the coefficients cut and of half eps for each one kept)."""
+    keys = [k for k in ("rc", "rs", "zc", "zs") if hasattr(s, k)]
+    C = {k: np.asarray(getattr(s, k), float) for k in keys}
+    N = int(s.N)
+    A = np.max([np.abs(v) for v in C.values()], axis=0)
+    rows = np.nonzero(A.max(1) > eps)[0]
+    cols = np.nonzero(A.max(0) > eps)[0]
+    M2 = int(rows.max()) if len(rows) else 0
+    N2 = int(np.max(np.abs(cols - N))) if len(cols) else 0
+    kept = {k: v[:M2 + 1, N - N2:N + N2 + 1] for k, v in C.items()}
+    dropped = sum(float(np.abs(v).sum() - np.abs(kept[k]).sum()) for k, v in C.items())
+    dropped += 0.5 * eps * sum(v.size for v in kept.values())
+    digits = int(round(-math.log10(eps)))
+    return dict(nfp=int(s.nfp), M=M2, N=N2, iota=float(s.iota), flux_Wb=float(s.flux),
+                phi0=float(getattr(s, "phi0", 0.0)), solved_M=int(s.M), solved_N=N, dropped_m=dropped,
+                **{k: np.round(v, digits).tolist() for k, v in kept.items()})
 
 
 # --------------------------------------------------------------------------- requests in their own processes
 class Processes:
-    """Direct requests of one source at fluxes, each in a fresh process (torux.batch), at most ``jobs`` at once."""
+    """Direct requests of one source at fluxes, each in a fresh process (torux.batch), at most ``jobs`` at once.
+
+    Where the system lets a process choose its cores (Linux), each request runs on cores of its own, TORUX_THREADS of
+    them: solves left to share every core slow each other down many times over (on eight cores, four requests that
+    each verify in 8 to 56 s alone came back undetermined after 215 s each, and in 8 to 56 s each when given two cores
+    apiece), so then at most as many run at once as there are cores for."""
 
     def __init__(self, src, jobs, opts):
         from . import batch
         self.b = batch
         self.src, self.jobs = src, max(1, int(jobs))
+        self.cpus = None
+        try:
+            mine = sorted(os.sched_getaffinity(0))
+            t = batch._threads()
+            self.jobs = min(self.jobs, max(1, len(mine) // t))
+            if len(mine) >= 2 * t:
+                self.cpus = [mine[i * t:(i + 1) * t] for i in range(len(mine) // t)]
+        except (AttributeError, OSError):
+            self.cpus = None
         self.args = dict(budget_s=None, tol=opts.get("tol", 3e-15), verify=opts.get("verify", True),
                          gradients=False, minor_radius=None, volume=None, largest=False)
         self.tmp = tempfile.TemporaryDirectory(prefix="torux-widths-")
@@ -445,19 +502,38 @@ class Processes:
         return self.jobs - len(self.running)
 
     def start(self, flux, budget):
+        import pickle
+        import subprocess
+        import sys
         it = self.b._Item(self.src, "widths")
         it.flux = float(flux)
         args = dict(self.args, budget_s=float(budget))
-        j = self.b._start(it, self.k, self.tmp.name, self.env, args)
+        cores = None
+        if self.cpus is not None:
+            used = {tuple(c) for _, _, _, c in self.running if c is not None}
+            cores = next(c for c in self.cpus if tuple(c) not in used)
+        # as torux.batch._start, on its own cores
+        base = os.path.join(self.tmp.name, str(self.k))
+        job = dict(source=it.payload, flux=it.flux, overrun=self.b._OVERRUN, budget_file=base + ".budget",
+                   choices=it.choices, **args)
+        with open(base + ".job", "wb") as fh:
+            pickle.dump(job, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        errfh = open(base + ".err", "wb")
+        pin = (lambda: os.sched_setaffinity(0, cores)) if cores is not None else None
+        proc = subprocess.Popen([sys.executable, "-c", self.b._WORKER, base + ".job", base + ".out"],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=errfh, env=self.env,
+                                close_fds=True, preexec_fn=pin)
+        j = self.b._Job(it, proc, base + ".out", base + ".err", errfh, time.time(), self.b._OVERRUN)
+        j.choices = it.choices
         self.k += 1
-        self.running.append((j, float(flux), float(budget)))
+        self.running.append((j, float(flux), float(budget), cores))
 
     def poll(self):
         out, still = [], []
-        for j, f, budget in self.running:
+        for j, f, budget, cores in self.running:
             if j.proc.poll() is None:
                 if time.time() - j.t0 <= 2 * budget + 60:
-                    still.append((j, f, budget))
+                    still.append((j, f, budget, cores))
                     continue
                 self.b._stop([j.proc])
             ans, _ = self.b._collect(j)
@@ -466,8 +542,8 @@ class Processes:
         return out
 
     def stop(self):
-        self.b._stop([j.proc for j, _, _ in self.running])
-        for j, _, _ in self.running:
+        self.b._stop([j.proc for j, _, _, _ in self.running])
+        for j, _, _, _ in self.running:
             try:
                 j.errfh.close()
             except OSError:
