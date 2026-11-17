@@ -215,7 +215,7 @@ def solve_closed_line(engine, nfp, q, guess_R, guess_Z, phi0=0.0, K=None, symmet
 
 
 REFINE_REL = 1e-5         # a line is solved again with more Fourier modes until its residue moves by at most this,
-REFINE_ABS = 1e-14        # relative, or by this absolutely
+                          # relative, or by at most RESIDUE_FLOOR
 REFINE_STEPS = 7          # at most this many more resolutions, K0 (the first solve's modes) more each
 REFINE_KMAX = 2048        # and never more modes than this
 RESIDUE_FLOOR = 1e-12     # a residue's error is never taken as less than this: below it the monodromy's trace over a
@@ -232,9 +232,10 @@ def _spectral(engine, line, nsteps=None):
 
 def _refine(engine, line, M, deadline=None):
     """The line solved again with K0 more Fourier modes at a time (Newton from the line before), until two resolutions
-    agree on the residue to REFINE_REL (or REFINE_ABS), at most REFINE_STEPS times and REFINE_KMAX modes, and after
-    the first time not past the deadline.  Returns (finest converged line, its monodromy, the last two resolutions'
-    differences of residue and of monodromy entries (None where no second resolution converged), record)."""
+    agree on the residue to REFINE_REL (or to RESIDUE_FLOOR: no residue is resolved below it, so the line of a thin
+    chain is not refined to the last mode for digits that are rounding), at most REFINE_STEPS times and REFINE_KMAX
+    modes, and after the first time not past the deadline.  Returns (finest converged line, its monodromy, the last two
+    resolutions' differences of residue and of monodromy entries (None if no second resolution converged), record)."""
     K0 = line.K
     rec = dict(K=[K0], residue=[float((2 - np.trace(M)) / 4)])
     d_res = d_M = None
@@ -256,7 +257,7 @@ def _refine(engine, line, M, deadline=None):
         rec["moved_m"] = float(np.max(np.linalg.norm(L2.section_points(L2.phi0) - prev.section_points(prev.phi0),
                                                      axis=1)))
         line, M = L2, M2
-        if d_res <= max(REFINE_REL * abs(r2), REFINE_ABS):
+        if d_res <= max(REFINE_REL * abs(r2), RESIDUE_FLOOR):
             break
     return line, M, d_res, d_M, rec
 
