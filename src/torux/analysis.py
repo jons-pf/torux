@@ -882,7 +882,7 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
             p, q = pr
             # the chain's lines and the jump hold the family's deadline too: their closed-line and fixed-iota
             # Newton solves were never cut
-            ch = analyse_chain(eng, tori, p, q, verbose=verbose, deadline=fam_deadline)
+            ch = analyse_chain(eng, tori, p, q, verbose=verbose, deadline=fam_deadline, axis=ax)
             out["chains"].append(chain_record(ch))
             with _budget.scope(fam_deadline):
                 new = jump_over(cont, tori, ch, direction=math.copysign(1.0, diota) if diota else 1.0,
@@ -1110,6 +1110,7 @@ def chain_record(ch):
                             section=l.section_points(0.0).tolist(), **_monodromy(l)) for l in ch.lines],
                 **({"shear_at": ch.info["shear_at"]} if ch.info.get("shear_at") else {}),
                 **({"lower_period": int(ch.info["lower_period"])} if ch.info.get("lower_period") else {}),
+                **({"traced_lines": int(ch.info["traced_lines"])} if ch.info.get("traced_lines") else {}),
                 **({"cut": True} if ch.info.get("cut") else {}))
 
 

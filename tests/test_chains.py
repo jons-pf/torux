@@ -53,6 +53,36 @@ def test_a_chain_says_which_family_torus_its_shear_is_from(monkeypatch):
     assert ch.shear == float(np.gradient(io, fl)[k])
 
 
+def test_a_chain_left_without_its_elliptic_line_has_it_traced(monkeypatch):
+    """torux.chains.analyse_chain: where Newton from the family's torus finds no elliptic line of the chain (it ended on
+    the magnetic axis), the line found by tracing (traced_chain_lines) is the chain's, its half width rests on it and
+    the record and torux.chainlist say how many lines were traced, and the jump's ladder (width_scale) is left as it was,
+    on Newton's elliptic lines only. With an elliptic line from Newton, or without the axis, nothing is traced."""
+    X, O = _line(-0.16, a=0.012), _line(0.83)
+    tori = [types.SimpleNamespace(flux=f, iota=i, nfp=NFP) for f, i in
+            ((0.00065, -0.33033), (0.00099, -0.33148), (0.00129, -0.33253))]
+    calls = []
+
+    def traced(engine, torus, axis, p, q, known=(), deadline=None, info=None, verbose=False):
+        calls.append((p, q, list(known)))
+        return [O]
+    monkeypatch.setattr(chains, "traced_chain_lines", traced)
+    monkeypatch.setattr(chains, "chain_lines", lambda *a, **k: [X])
+    ch = chains.analyse_chain(None, tori, -1, 6, axis=object())
+    assert calls == [(-1, 6, [X])] and ch.O == [O] and ch.X == [X] and ch.info["traced_lines"] == 1
+    assert ch.half_width_est == chains.pendulum_half_width(0.83, 6, NFP, ch.shear) and "width_scale" not in ch.info
+    rec = chain_record(ch)
+    assert rec["traced_lines"] == 1 and [ln["residue"] for ln in rec["lines"]] == [-0.16, 0.83]
+    got = chainlist.of_record(dict(nfp=NFP, chains=[rec]))[0]
+    assert got["lines_traced"] == 1 and got["O_residue"] == 0.83 and len(got["X"]) == 1
+    assert got["half_width_Wb"] == ch.half_width_est
+    calls.clear()
+    assert chains.analyse_chain(None, tori, -1, 6).O == [] and calls == []
+    monkeypatch.setattr(chains, "chain_lines", lambda *a, **k: [X, _line(0.2, a=0.011)])
+    ch = chains.analyse_chain(None, tori, -1, 6, axis=object())
+    assert calls == [] and "traced_lines" not in ch.info and "width_scale" in ch.info
+
+
 def _pendulum(q, p, nfp, shear_J, eps):
     """Field lines of one resonant harmonic on a sheared transform, phi as time, J = Phi / 2 pi:
     theta' = iota_r + shear_J (J - J0), J' = q eps sin(q theta - p nfp phi). The residue of its O line (theta = pi / q
@@ -164,9 +194,11 @@ def test_a_request_past_the_last_chain_keeps_the_chain_and_names_its_edge_barrie
     """CNT at 88 degrees and I_IL / I_PF = 3.632, whose surfaces end within 2e-6 Wb of the axis, asked for 3.79e-4 Wb:
     the family stalls at the iota = -2/3 chain and cannot jump it, so the only certificate tried is an edge barrier.
     The answer says so and no island band, and it keeps the chain (its p/q and lines) and the closed lines the edge
-    barrier screened beyond it, with their crossings, through save and load. The elliptic line the chain's search
-    converged to there is the magnetic axis gone round three times (its three crossings one point): it is left out,
-    and no half width rests on it."""
+    barrier screened beyond it, with their crossings, through save and load. The elliptic line Newton from the family's
+    torus converged to there is the magnetic axis gone round three times (its three crossings one point): it is left
+    out, and the chain's own elliptic line is found by tracing instead (torux.chains.traced_chain_lines), through
+    R = 0.2340 m on Z = 0 with residue 0.338 (an independent tracer has R = 0.23407 and 0.23401 m, residues 0.33664 and
+    0.33871, at I_IL / I_PF = 3.63 and 3.6325), and the half width rests on it."""
     import torux
     a = torux.solve(_cnt(88, 3.632), flux=0.00037895125037584076, budget_s=300)
     text = " ".join(str(a).split())
@@ -176,8 +208,10 @@ def test_a_request_past_the_last_chain_keeps_the_chain_and_names_its_edge_barrie
     assert [(c["p"], c["q"]) for c in fam] == [(-1, 3)] and abs(fam[0]["iota"] + 2 / 3) < 1e-15
     assert fam[0]["lines_of_lower_period"] >= 1, fam[0]
     assert all(len({tuple(np.round(p, 8)) for p in ln["section"]}) == 3 for ln in fam[0]["O"] + fam[0]["X"])
-    if not fam[0]["O"]:
-        assert "half_width_Wb" not in fam[0] and "O_residue" not in fam[0]
+    assert fam[0]["lines_traced"] == 1 and len(fam[0]["O"]) == 1, fam[0]
+    O = fam[0]["O"][0]
+    assert 0.336 < O["residue"] < 0.340 and fam[0]["O_residue"] == O["residue"] and fam[0]["half_width_Wb"] > 0
+    assert any(0.2338 < R < 0.2343 and abs(Z) < 1e-9 for R, Z in O["section"]), O["section"]
     edge = [c for c in a.evidence["chains"] if c["found_in"] == "edge barrier"]
     assert edge and all(ln.get("section") for c in edge for ln in c["O"] + c["X"])
     path = tmp_path / "cnt88.json"

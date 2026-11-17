@@ -244,3 +244,93 @@ def symmetric_chain_lines(engine, source, axis, p, q, windows, deadline=None, ns
                 break
         info.append(dict(plane=plane, side=side, roots=int(len(roots)), new_lines=nr))
     return lines, info
+
+
+def symmetric_lines_outward(engine, source, axis, p, q, windows, keep, skip=(), deadline=None, nscan=240,
+                            steps_per_period=24, verbose=False, max_solves=2):
+    """On each symmetric half-line of `windows` ({(plane, side): (r_lo, r_hi)} as symmetric_chain_lines', the starts
+    spaced geometrically in r), the first stellarator-symmetric closed line of period q and winding p outward from the
+    axis that keep(line) accepts: sign changes of Z after q half periods, refined, the winding about the axis checked
+    on their traced trajectories, then each Newton-solved as a Fourier curve (torux.orbits.solve_closed_line) with its
+    spectral monodromy, nearest the axis first, until one is kept or max_solves have been solved on that half-line (the
+    lines nearest the axis are the nearest chain's, and a farther one would be another chain's).  A root within 1e-6 m
+    of a crossing of a line in `skip` (ClosedLine list) on that half-line is that line and is not solved again.
+    Returns (lines, info): at most one line a half-line, distinct."""
+    nfp = int(source.nfp)
+    T = 2 * np.pi / nfp
+    sgn = SD.bphi_sign(engine, axis)
+    lines, info = [], []
+    for (plane, side), (r_lo, r_hi) in windows.items():
+        if deadline is not None and time.time() > deadline:
+            info.append(dict(plane=plane, side=side, cut=True))
+            break
+        phi_s = plane * np.pi / nfp
+        Ra = float(axis.at(np.array([phi_s]))[0][0])
+        sec = BR.FieldSection(engine, source, sign=sgn, k=6, steps_per_period=steps_per_period, reference=False,
+                              scale=abs(r_hi), phi0=phi_s)
+        Rv = np.sort(Ra + side * np.geomspace(r_lo, r_hi, nscan))
+        o = sec.tracer.trace(np.stack([Rv, 0 * Rv], -1), phi_s, q * np.pi / nfp)
+        Z = np.where(o["lost"], np.nan, o["y"][:, 1])
+        idx = np.flatnonzero(np.isfinite(Z[:-1]) & np.isfinite(Z[1:]) & (Z[:-1] * Z[1:] < 0))
+        if len(idx) == 0:
+            info.append(dict(plane=plane, side=side, roots=0))
+            continue
+
+        def fun(R):
+            oo = sec.tracer.trace(np.stack([R, 0 * R], -1), phi_s, q * np.pi / nfp)
+            return np.where(oo["lost"], np.nan, oo["y"][:, 1])
+        roots, _ = BR._refine_roots(fun, Rv[idx], Rv[idx + 1], Z[idx], Z[idx + 1], 1e-12 * abs(Ra), maxit=60)
+        roots = roots[np.isfinite(roots)]
+        roots = roots[np.argsort(np.abs(roots - Ra))]
+        # the windings of all roots at once, on trajectories sampled for the Fourier guesses
+        nout = max(32, 4 * steps_per_period)
+        trc = sec.line_tracer(k=6, steps_per_period=nout)
+        oo = trc.trace(np.stack([roots, 0 * roots], -1), phi_s, q * T, nsteps=q * nout, record=True)
+        Y = np.concatenate([np.stack([roots, 0 * roots], -1)[None], np.array(oo["rec"]).reshape(-1, len(roots), 2)])
+        phis = phi_s + q * T * np.arange(len(Y)) / (len(Y) - 1)
+        Rax_, Zax_ = axis.at(phis)
+        ang = np.unwrap(np.arctan2(Y[:, :, 1] - Zax_[:, None], Y[:, :, 0] - Rax_[:, None]), axis=0)
+        wind = (ang[-1] - ang[0]) / (2 * np.pi)
+        kept = None
+        solves = 0
+        for j, R0 in enumerate(roots):
+            if solves >= max_solves:
+                info.append(dict(plane=plane, side=side, stopped="max_solves"))
+                break
+            if deadline is not None and time.time() > deadline:
+                info.append(dict(plane=plane, side=side, cut=True))
+                break
+            rec = dict(plane=plane, side=side, R=float(R0), winding=float(wind[j]))
+            if oo["lost"][j] or abs(abs(wind[j]) - abs(p)) > 0.25:
+                info.append(dict(rec, rejected="winding" if not oo["lost"][j] else "lost"))
+                continue
+            known = None
+            for ln in list(skip) + lines:
+                Rk, Zk = ln.at(phi_s + T * np.arange(q))
+                if np.min(np.hypot(Rk - R0, Zk)) < 1e-6:
+                    known = ln
+                    break
+            if known is not None:
+                info.append(dict(rec, known=True, residue=float(known.residue)))
+                if keep(known):
+                    break
+                continue
+            gR, gZ = _fourier_guess(Y[:-1, j, 0], Y[:-1, j, 1], q * T, phi_s)
+            K = max(24, 10 * q + 16)
+            solves += 1
+            ln = OR.solve_closed_line(engine, nfp, q, gR, gZ, phi0=phi_s, K=K, symmetric=True, deadline=deadline)
+            if not ln.converged:
+                info.append(dict(rec, rejected="newton", res=float(ln.res)))
+                continue
+            ln = OR.line_monodromy(engine, ln)
+            info.append(dict(rec, residue=float(ln.residue)))
+            if verbose:
+                print(f"    chain {p}/{q} plane {plane} side {side:+d}: R {R0:.8f} winding {wind[j]:.3f} residue "
+                      f"{ln.residue:.4e}", flush=True)
+            if keep(ln):
+                kept = ln
+                break
+        if kept is not None:
+            lines.append(kept)
+        info.append(dict(plane=plane, side=side, roots=int(len(roots)), kept=kept is not None))
+    return lines, info

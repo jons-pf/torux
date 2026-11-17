@@ -20,6 +20,8 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
                     edge barrier's line was brought to convergence (its move, and its residue and measure before).
                     A line neither converged nor closing to torux.closure.CLOSES_M is no line of the chain: it is
                     left out and counted in lines_not_converged
+    lines_traced    of its O and X lines, those found by tracing from the symmetric half-lines (torux.chains.
+                    traced_chain_lines) where Newton from the family's torus left it with no elliptic line
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
@@ -172,6 +174,8 @@ def _family(c, nfp):
     if O:
         out["O_residue"] = max(o["residue"] for o in O)
     out["O"], out["X"] = O, X
+    if c.get("traced_lines"):
+        out["lines_traced"] = int(c["traced_lines"])     # (torux.chains.traced_chain_lines) of its lines, found by tracing
     if c.get("cut"):
         out["cut"] = True            # the chain's line search was cut by the deadline
     if "flux_Wb" in out:
