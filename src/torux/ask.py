@@ -191,6 +191,8 @@ class _Search:
         self.after = 0.0          # seconds the crossed stage ran past the deadline
         self.traced = []          # the largest: the stages that traced lines beyond a chain (torux.beyond.cross)
         self.widths = None        # (brackets by chain, summary) of the closing in on the chains (torux.widths)
+        self.tori = []            # every surface a request verified, kept to place every chain against (torux.bands)
+        self.widths_tori = []     # the same, of the closing in
 
     def left(self):
         return self.deadline - time.time()
@@ -212,6 +214,8 @@ class _Search:
         entry = dict(flux=None if flux is None else float(flux), purpose=purpose, budget_s=round(b, 1),
                      wall_s=round(time.time() - t, 1), status=r.status)
         ok = verified(r)
+        if _verified_torus(r) is not None:
+            self.tori.append(r.surface)
         if ok and flux is not None:
             sz = size(r.surface)
             entry.update(iota=float(r.iota), **sz)
@@ -283,13 +287,17 @@ class _Search:
                 annotate(chains, *self.crossed)
             except Exception:  # noqa: BLE001  (placing the chains costs only their placement, never the answer)
                 pass
+        if self.widths is not None:
+            from .widths import attach
+            attach(chains, self.widths[0])
+        bands = self.fit_bands(chains)
         if chains and not brief:
             words = list(words) + _chain_words(chains)
-        if self.widths is not None:
-            from .widths import attach, words as widths_words
-            attach(chains, self.widths[0])
-            if not brief:
-                words = list(words) + [widths_words(self.widths[1])]
+        if self.widths is not None and not brief:
+            from .widths import words as widths_words
+            words = list(words) + [widths_words(self.widths[1])]
+        if bands and not brief and (bands.get("cut") or bands.get("withdrawn")):
+            words = list(words) + [_bands_words(bands)]
         r.evidence["search"] = dict(question=self.question, asked=self.asked, budget_s=self.budget,
                                     budget_stated=self.stated, wall_s=time.time() - self.t0, requests=self.log,
                                     words=[f"asked: {self.what}"] + ([] if brief else list(words) + [
@@ -297,12 +305,47 @@ class _Search:
                                     **fields)
         if self.widths is not None:
             r.evidence["search"]["widths"] = self.widths[1]
+        if bands is not None:
+            r.evidence["search"]["bands"] = bands
         # every chain any request of the search identified, once each (per request in requests[i]['chains'])
         r.evidence["search"]["chains"] = chains
         r.evidence["chains"] = chains
         r.budget_s = self.budget
         r.wall_s = time.time() - self.t0
         return r
+
+    def surfaces(self):
+        """Every surface the search verified, as torux.bands Surfaces: its requests' (each around the magnetic axis
+        where the axis is known), the stepped-across stage's and the closing in's."""
+        from .bands import pool
+        axis = self.crossed[2] if self.crossed is not None else None
+        mine = self.tori
+        if axis is not None:
+            from .analysis import torus_topology
+            ok = []
+            for t in mine:
+                try:
+                    if torus_topology(t, axis)["ok"]:
+                        ok.append(t)
+                except Exception:  # noqa: BLE001  (a surface whose topology cannot be checked is not placed)
+                    pass
+            mine = ok
+        return pool((mine, "search"), (self.crossed[0] if self.crossed is not None else [], "stepped across"),
+                    (self.widths_tori, "widths"))
+
+    def fit_bands(self, chains):
+        """Every chain's band held against every surface the search verified (torux.bands.fit): its summary, or
+        None where there are no chains."""
+        if not chains:
+            return None
+        from .bands import fit
+        t = time.time()
+        try:
+            out = fit(chains, self.surfaces())
+        except Exception as e:  # noqa: BLE001  (the fit costs its own summary, never the answer)
+            return dict(error=repr(e), wall_s=round(time.time() - t, 1))
+        out["wall_s"] = round(time.time() - t, 1)
+        return out
 
     def final(self, flux):
         """The Result to return at a verified flux: the one in hand, the solver's answer to the request that returned
@@ -365,6 +408,13 @@ def _unresolved_words(c):
     return f"{len(u)} lines whose residues lie within their errors, so {what}"
 
 
+def _bands_words(b):
+    """What holding every chain's band against every verified surface did (torux.bands), in a line."""
+    return (f"bands: of {b['chains']} chains, {b['cut']} estimate{'s' if b['cut'] != 1 else ''} cut by a verified "
+            f"surface the chain's crossings place on that side and {b['withdrawn']} withdrawn, against "
+            f"{b['surfaces']} verified surfaces (answer.evidence['search']['bands'])")
+
+
 def _chain_words(chains):
     """The chains a search met, in a line, and the ones the answer's family stepped across in another."""
     crossed = [c for c in chains if "stepped across" in c["found_in"]]
@@ -382,6 +432,8 @@ def _chain_words(chains):
                              else " by extrapolation")
             if c.get("half_width_Wb") is not None:
                 name += f", half width about {c['half_width_Wb']:.1e} Wb"
+            elif c.get("band_withdrawn"):
+                name += f", no band: {c['band_withdrawn']}"
             elif _unresolved_words(c):
                 name += f", {_unresolved_words(c)}"
             where = _placed(c)
@@ -401,6 +453,7 @@ def _chain_words(chains):
                 name += f" at {c['flux_Wb']:.4g} Wb"
             more_ = [w for w in (_placed(c),
                                  f"half width about {c['half_width_Wb']:.1e} Wb" if c.get("half_width_Wb") is not None
+                                 else f"no band: {c['band_withdrawn']}" if c.get("band_withdrawn")
                                  else _unresolved_words(c)) if w]
             if c.get("cut"):
                 more_.append("cut short by the budget")
@@ -414,6 +467,20 @@ def _chain_words(chains):
 def _qmax():
     from .crossed import QMAX
     return QMAX
+
+
+def _verified_torus(r):
+    """The surface a request verified, whatever its question: the surface at its flux (status 'surface', cut short
+    by its deadline or not), or the outermost torus of its family that the solver and the independent evaluator
+    accepted (status 'range', the verified lower bound); None otherwise."""
+    if r is None or r.surface is None:
+        return None
+    if r.status == "surface":
+        return r.surface
+    rg = (r.record or {}).get("range") or {}
+    if r.status == "range" and rg.get("verified") and rg.get("verified_lower_bound") is not None:
+        return r.surface
+    return None
 
 
 def verified(r):

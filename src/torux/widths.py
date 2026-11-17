@@ -625,6 +625,8 @@ def stage(S, r, widths_s, jobs=None, verbose=False):
     jobs = JOBS if jobs is None else int(jobs)
     runner = Processes(S.src, jobs, S.opts)
     wall = st.run(runner, t0 + float(widths_s))
+    # (the surfaces its requests verified, for holding every chain's band against: torux.bands)
+    S.widths_tori = [t.torus for t in st.pool if t.came == "request"]
     surfaces = []
     res = st.results(surfaces)
     two = sum(1 for b in res.values() if b["inner_Wb"] is not None and b["outer_Wb"] is not None
