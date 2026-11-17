@@ -215,6 +215,7 @@ class Stage:
         self.failed = set(float(f) for f in failed)
         self.bound = bound
         self.pending = {}                        # flux -> (chain, side)
+        self.other = []                          # (surface, around the axis) verified but not closed in from
         self.log = []
         self.chains = [_Chain(c, i) for i, c in enumerate(chains) if chain_lines(c)]
         for t in tori:
@@ -409,6 +410,17 @@ class Stage:
             entry["placed"] = {f"{c2.entry.get('p')}/{c2.entry.get('q')}": w for c2, w in placed if w is not None}
         else:
             self.failed.add(f)
+            if ans is not None and ans.status == "surface" and ans.surface is not None:
+                # a surface verified all the same (its refinement cut by the request's budget, or not around the
+                # magnetic axis): not closed in from, but every chain's band is held against it (torux.bands)
+                around = entry.get("topology") is not False
+                if around and self.axis is not None:
+                    from .analysis import torus_topology
+                    try:
+                        around = bool(torus_topology(ans.surface, self.axis)["ok"])
+                    except Exception:  # noqa: BLE001
+                        around = False
+                self.other.append((ans.surface, around))
         self.log.append(entry)
         if self.verbose:
             print(f"   widths: {f:.9g} Wb {entry['status']} in {entry['wall_s']} s", flush=True)
@@ -625,6 +637,9 @@ def stage(S, r, widths_s, jobs=None, verbose=False):
     jobs = JOBS if jobs is None else int(jobs)
     runner = Processes(S.src, jobs, S.opts)
     wall = st.run(runner, t0 + float(widths_s))
+    # (the surfaces its requests verified, for holding every chain's band against: torux.bands)
+    S.widths_tori = [t.torus for t in st.pool if t.came == "request"] + [t for t, a in st.other if a]
+    S.widths_off = [t for t, a in st.other if not a]
     surfaces = []
     res = st.results(surfaces)
     two = sum(1 for b in res.values() if b["inner_Wb"] is not None and b["outer_Wb"] is not None
