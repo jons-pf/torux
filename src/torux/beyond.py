@@ -106,6 +106,8 @@ def traced_jump(engine, source, cont, tori, chain, axis, direction, deadline=Non
     probes = [_orbit_record(R0, o["sec"][i], o["dang"][i], o["lost"][i], engine) for i, R0 in enumerate(R0s)]
     secs = {i: o["sec"][i] for i in range(len(R0s))}
     log["nper"], log["periods"], log["trace_s"] = nper, int(o["n"]), round(time.time() - t0, 1)
+    if o["n"] < nper:
+        return finish(why="budget")         # (lines cut short are not classified)
     F_last = abs(float(last.flux))
 
     def past(r):
@@ -214,8 +216,8 @@ def reuse(keep, cont, tori, chain, axis):
         sol = cont.solve(T, T.flux, T.M, T.N, maxit=15, patience=3)
         if sol.converged and np.isfinite(sol.bn_off) and sol.bn_off > cont.bn_cont:
             sol = cont.raise_until(sol, sol.flux, cont.bn_cont)
-        ok = (sol.converged and np.isfinite(sol.bn_off) and sol.bn_off < cont.bn_accept and abs(sol.flux) > abs(last.flux)
-              and sol.flux * last.flux > 0 and torus_topology(sol, axis)["ok"])
+        ok = (sol.converged and np.isfinite(sol.bn_off) and sol.bn_off < cont.bn_accept
+              and abs(sol.flux) > abs(last.flux) and sol.flux * last.flux > 0 and torus_topology(sol, axis)["ok"])
     except Exception as e:  # noqa: BLE001
         log["fail"] = repr(e)
         ok = False
@@ -224,7 +226,8 @@ def reuse(keep, cont, tori, chain, axis):
         log["outcome"] = "reused torus not solved again"
         return None, log
     log["outcome"] = "torus"
-    log["torus"] = dict(flux=float(sol.flux), iota=float(sol.iota), M=int(sol.M), N=int(sol.N), bn_off=float(sol.bn_off))
+    log["torus"] = dict(flux=float(sol.flux), iota=float(sol.iota), M=int(sol.M), N=int(sol.N),
+                        bn_off=float(sol.bn_off))
     return sol, log
 
 
@@ -275,8 +278,8 @@ def cross(source, keep, deadline=None, verbose=False, floor=0.0):
                                  verbose=verbose, keep=keep)
     except Exception as e:  # noqa: BLE001  (the stage costs its time, never the question)
         log = dict(p=k[0], q=k[1], outcome=f"error: {e!r}")
-    if k not in keep and (deadline is None or time.time() < deadline - 10):
-        keep[k] = None              # (traced to its end and nothing found: not again in this question)
+    if k not in keep:
+        keep[k] = None              # (nothing found, or the stage's time ran out: not traced again in this question)
     log["from_flux_Wb"] = st["flux"]
     log["stage_s"] = round(time.time() - t0, 1)
     return log

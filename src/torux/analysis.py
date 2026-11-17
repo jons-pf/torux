@@ -910,6 +910,17 @@ def analyse(source, flux=None, dmin=None, tol=3e-15, beyond=0.0, verbose=False, 
                 break
             njump += 1
             if np.isfinite(target) and abs(new.flux) >= abs(target):
+                if (tj is not None and tj.get("reused") and flux is not None
+                        and abs(new.flux) > abs(target) * (1 + 1e-12)):
+                    # (traced) the reused torus lies beyond the request: walked inward to it (torux.seeds.walk), which
+                    # reaches it where the request lies between the chain and that torus, not in the chain
+                    from .seeds import walk
+                    with _budget.scope(fam_deadline):
+                        wt, ok_w, info_w = walk(cont, new, math.copysign(abs(target), new.flux), deadline=fam_deadline)
+                    tj["walk"] = dict(info_w, ok=bool(ok_w))
+                    if ok_w:
+                        tori.append(wt[-1])
+                        break
                 # the jump passed the request: the request lies in the band it jumped
                 out["jumped_past"] = True
                 tori.append(new)

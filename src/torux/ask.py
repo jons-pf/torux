@@ -41,13 +41,11 @@ CROSSED_S = 90.0
 CROSSED_SHARE = 0.075
 # the largest: where nothing certified bounds what the coils hold and a request's family stalled at a chain its jump
 # could not cross, a stage traces lines beyond it (torux.beyond.cross) with the least of these seconds and this share of
-# what is left, at most MAX_CROSS times (a chain each), when at least CROSS_MIN_S are left; after each torus found, at
-# most MAX_DOWN of the family's fluxes past the chain are asked, the outermost first
+# what is left (CROSS_MIN_S at least), at most MAX_CROSS times (a chain each), when at least CROSS_MIN_S are left
 CROSS_STAGE_S = 300.0
 CROSS_STAGE_SHARE = 0.3
-CROSS_MIN_S = 120.0
+CROSS_MIN_S = 150.0
 MAX_CROSS = 3
-MAX_DOWN = 4
 UNITS = {"minor_radius": "m", "volume": "m^3"}
 WORDS = {"minor_radius": "minor radius", "volume": "volume"}
 
@@ -219,6 +217,10 @@ class _Search:
                    flux_after=j.get("flux_after")) for j in ((r.record or {}).get("jumps") or []) if j.get("traced")]
         if tj:
             entry["traced"] = tj
+        # the chains its family stalled at with no torus beyond them (p, q)
+        st = [[j.get("p"), j.get("q")] for j in ((r.record or {}).get("jumps") or []) if not j.get("ok")]
+        if st:
+            entry["stalled"] = st
         entry["chains"] = [dict(c, request=len(self.log) + 1) for c in _chains(r)]
         self.log.append(entry)
         r._ask_entry = entry
@@ -809,8 +811,7 @@ def _largest(src, budget_s, opts):
                              f"and the search asks no further")
         # (traced) where no certificate bounds what the coils hold and a request's family stalled at a chain its jump
         # could not cross: the question's own stage traces lines beyond that chain for a torus (torux.beyond.cross),
-        # kept for every later request, whose families then go on from it; a request beyond everything seen gives
-        # the family's fluxes past the chain, asked directly from the outermost down until one verifies
+        # kept for every later request, whose families then go on from it (or walk back from it to their flux)
         from . import beyond as _bey
         for _ in range(MAX_CROSS):
             if state["lo"] is None or any(c.get("no_surface_above_Wb") is not None for _, c, _ in S.certs):
@@ -821,56 +822,65 @@ def _largest(src, budget_s, opts):
             t_c = time.time()
             _say(f"tracing beyond the chain p/q = {ks[0][0]}/{ks[0][1]} where the families stalled, for a torus beyond "
                  f"it")
-            log = _bey.cross(src, src._traced, deadline=t_c + min(CROSS_STAGE_S, CROSS_STAGE_SHARE * S.left()),
-                             floor=state["lo"])
+            log = _bey.cross(src, src._traced, floor=state["lo"], deadline=min(
+                S.deadline - MIN_REQUEST_S, t_c + min(CROSS_STAGE_S, max(CROSS_MIN_S, CROSS_STAGE_SHARE * S.left()))))
             if log is None:
                 break
             S.traced.append({k: v for k, v in log.items() if k not in ("probes",)})
             _say(f"traced beyond p/q = {log['p']}/{log['q']}: {log['outcome']} in {time.time() - t_c:.0f} s, "
                  f"{max(0.0, S.left()):.0f} s of the budget left")
-            if log.get("outcome") != "torus":
-                continue
-            seen = list(S.size_of) + list(S.failed) + cands
-            if S.left() <= 4 * MIN_REQUEST_S:
-                raise _OutOfTime
-            f_b = 2.0 * max(seen)
-            r = S.ask(f_b, "beyond every flux seen, the family going on past the chain from the traced torus",
-                      src=free, budget=max(S.default_budget(f_b), 0.5 * S.left()))
-            if r is None:
-                raise _OutOfTime
-            if _terminal(r):
-                raise _Terminal(r)
-            more = _family(r.record or {})
-            if f_b in S.size_of:
-                if free is src:
-                    take(f_b)
-                else:
-                    S.best.pop(f_b, None)
-                    S.size_of.pop(f_b)
-                    more.append(f_b)
-            del r
-            lo = state["lo"]
-            c = sorted((f for f in set(more) if f > lo * (1 + 1e-12) and f not in S.failed and f not in S.size_of
-                        and _covering(S, f) is None), reverse=True)
-            for f in c[:MAX_DOWN]:
-                if probe(f, "a flux the family reached past the chain from the traced torus, the outermost first"):
-                    break
+        crossed = [t for t in S.traced if t.get("outcome") == "torus"]
+        passed = False
+        for t in crossed:
+            # the traced torus's own flux: the requests' families reach that torus at once (reuse)
+            f_t = abs(float(t["torus"]["flux"]))
+            if state["lo"] is not None and f_t > state["lo"] * (1 + 1e-12) and f_t not in S.size_of and \
+                    f_t not in S.failed and _covering(S, f_t) is None:
+                probe(f_t, "the flux of the torus traced beyond the chain")
         # between the largest verified flux and the smallest beyond it that failed or that a certificate rules out,
-        # until they are within GAP of each other
-        for _ in range(6):
+        # until they are within GAP of each other (the families of requests past a traced chain go on from its torus,
+        # or walk back from it to their flux). (traced) When nothing above the largest verified flux is left
+        # undecided, a request beyond everything seen gives the family past the chain to climb
+        steps = 0
+        while steps < 6:
             lo = state["lo"]
             if lo is None:
                 break
             up = [f for f in S.failed if f > lo] + [
                 c["no_surface_above_Wb"] for _, c, _ in S.certs if c.get("no_surface_above_Wb", 0) > lo]
-            if not up or (min(up) - lo) <= GAP * lo:
+            top = min(up) if up else None
+            if top is None and crossed and not passed:
+                passed = True
+                seen = list(S.size_of) + list(S.failed) + cands
+                if S.left() <= 4 * MIN_REQUEST_S:
+                    raise _OutOfTime
+                f_b = 2.0 * max(seen)
+                r = S.ask(f_b, "beyond every flux seen, the family going on past the chain from the traced torus",
+                          src=free, budget=max(S.default_budget(f_b), 0.5 * S.left()))
+                if r is None:
+                    raise _OutOfTime
+                if _terminal(r):
+                    raise _Terminal(r)
+                more = _family(r.record or {})
+                if f_b in S.size_of:
+                    if free is src:
+                        take(f_b)
+                    else:
+                        S.best.pop(f_b, None)
+                        S.size_of.pop(f_b)
+                        more.append(f_b)
+                del r
+                climb(sorted(set(more)))
+                continue
+            if top is None or (top - lo) <= GAP * lo:
                 break
-            f = 0.5 * (lo + min(up))
+            f = 0.5 * (lo + top)
             if _covering(S, f) is not None:
                 break
             if S.left() < 0.25 * S.default_budget(f):
                 raise _OutOfTime       # (a request with a sliver of its budget decides nothing)
             probe(f, "between the largest verified flux and the least one beyond it that failed")
+            steps += 1
     except _OutOfTime:
         state["stop"] = "budget"
     except _Terminal as t:
