@@ -56,24 +56,28 @@ def lines_of(c):
 
 
 class Surface:
-    """A verified surface of the answer with its sections (by plane) kept for every chain it is placed against."""
-    __slots__ = ("torus", "flux", "sections", "where")
+    """A verified surface of the answer with its sections (by plane) kept for every chain it is placed against.
+    around: whether it is a torus of the magnetic axis's family (torux.analysis.torus_topology); one that is not is
+    never placed, so a band holding it is withdrawn rather than cut by it."""
+    __slots__ = ("torus", "flux", "sections", "where", "around")
 
-    def __init__(self, torus, where):
-        self.torus, self.where = torus, where
+    def __init__(self, torus, where, around=True):
+        self.torus, self.where, self.around = torus, where, bool(around)
         self.flux = abs(float(torus.flux))
         self.sections = {}
 
 
 def pool(*groups):
-    """One Surface a flux from groups of (torus objects, where they came from), the first of two at one flux kept."""
+    """One Surface a flux from groups of (torus objects, where they came from[, around the axis]), the first of two
+    at one flux kept."""
     out = []
-    for tori, where in groups:
+    for g in groups:
+        tori, where, around = (tuple(g) + (True,))[:3]
         for t in tori or []:
             if t is None:
                 continue
             try:
-                s = Surface(t, where)
+                s = Surface(t, where, around)
             except (TypeError, ValueError, AttributeError):
                 continue
             if not np.isfinite(s.flux) or any(abs(s.flux - x.flux) <= REL_SAME * s.flux for x in out):
@@ -87,6 +91,8 @@ def place(s, lines):
     distance to the section (m)). A crossing counts only farther from the section than its line's accuracy and four
     times the section's chord error; 'crosses' where counted crossings lie on both sides."""
     votes, near = set(), np.inf
+    if not s.around:
+        return None, near
     for P, phi, m in lines:
         if phi not in s.sections:
             s.sections[phi] = section(s.torus, phi)
@@ -148,7 +154,9 @@ def fit_chain(c, surfaces):
     hi = min(outs, key=lambda s: s.flux) if outs else None
     a = lo.flux if lo is not None else -np.inf
     b = hi.flux if hi is not None else np.inf
-    unplaced = [dict(flux_Wb=s.flux, nearest_m=d, **({"crosses": True} if w == "crosses" else {}))
+    unplaced = [dict(flux_Wb=s.flux, nearest_m=d if np.isfinite(d) else None,
+                     **({"crosses": True} if w == "crosses" else {}),
+                     **({} if s.around else {"not_around_axis": True}))
                 for s, w, d in sides if w not in ("inner", "outer") and a < s.flux < b]
     pl = dict(inner_Wb=None if lo is None else lo.flux, outer_Wb=None if hi is None else hi.flux,
               surfaces=len(surfaces), placed=len(ins) + len(outs))

@@ -160,3 +160,27 @@ def test_a_band_cut_at_a_surface_never_holds_it_by_a_rounding():
         hi = lo * (1 + float(rng.uniform(1e-12, 1.0)))
         m, h = bands.middle(lo, hi)
         assert m - h >= lo and m + h <= hi and h >= 0.5 * (hi - lo) * (1 - 1e-12)
+
+
+def test_a_surface_not_around_the_axis_is_never_placed():
+    """A verified surface that is not a torus of the axis's family (an island's, say) cannot be ordered with the
+    chain by flux: a band holding it is withdrawn, never cut by it."""
+    f = _f(0.07)
+    c = _chain(flux=f, half=_f(0.0702) - f)
+    S = bands.pool(([_circle(0.0701)], "widths", False), ([_circle(0.06)], "search"))
+    assert bands.fit_chain(c, S) == "withdrawn"
+    (u,) = c["placement"]["unplaced"]
+    assert u["not_around_axis"] and u["nearest_m"] is None and c["placement"]["inner_Wb"] == pytest.approx(_f(0.06))
+
+
+def test_the_closing_in_keeps_the_surfaces_it_does_not_close_in_from():
+    """A request of the closing in whose surface verified but whose refinement its budget cut is not closed in from
+    (its flux counts as not verified there), but it is a verified surface all the same, and kept for the bands."""
+    from torux.api import Result
+    from torux.ask import verified
+    st = widths.Stage([], [])
+    T = _circle(0.07)
+    st._take(0.07, Result("surface", 1.0, 0.0, surface=T, record=dict(refine_stop="deadline")), 1.0, verified)
+    assert st.other == [(T, True)] and 0.07 in st.failed
+    st._take(0.08, Result("undetermined", 1.0, 0.0), 1.0, verified)
+    assert len(st.other) == 1

@@ -193,6 +193,7 @@ class _Search:
         self.widths = None        # (brackets by chain, summary) of the closing in on the chains (torux.widths)
         self.tori = []            # every surface a request verified, kept to place every chain against (torux.bands)
         self.widths_tori = []     # the same, of the closing in
+        self.widths_off = []      # and those of the closing in that are not around the magnetic axis
 
     def left(self):
         return self.deadline - time.time()
@@ -315,23 +316,23 @@ class _Search:
         return r
 
     def surfaces(self):
-        """Every surface the search verified, as torux.bands Surfaces: its requests' (each around the magnetic axis
-        where the axis is known), the stepped-across stage's and the closing in's."""
+        """Every surface the search verified, as torux.bands Surfaces: its requests', the stepped-across stage's and
+        the closing in's, those not around the magnetic axis (where it is known) never placed."""
         from .bands import pool
         axis = self.crossed[2] if self.crossed is not None else None
-        mine = self.tori
+        mine, off = self.tori, []
         if axis is not None:
             from .analysis import torus_topology
             ok = []
             for t in mine:
                 try:
-                    if torus_topology(t, axis)["ok"]:
-                        ok.append(t)
+                    good = bool(torus_topology(t, axis)["ok"])
                 except Exception:  # noqa: BLE001  (a surface whose topology cannot be checked is not placed)
-                    pass
+                    good = False
+                (ok if good else off).append(t)
             mine = ok
         return pool((mine, "search"), (self.crossed[0] if self.crossed is not None else [], "stepped across"),
-                    (self.widths_tori, "widths"))
+                    (self.widths_tori, "widths"), (off, "search", False), (self.widths_off, "widths", False))
 
     def fit_bands(self, chains):
         """Every chain's band held against every surface the search verified (torux.bands.fit): its summary, or
