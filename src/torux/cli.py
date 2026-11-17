@@ -2,11 +2,11 @@
 
     torux solve SOURCE [SOURCE ...] [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S] [--nfp N]
                 [--kind K] [--gradients] [--no-verify] [--trace-lines N] [--save FILE ...] [--mpol N] [--ntor N]
-                [--plot FILE] [--boozer] [--coils NAME] [--currents saved|dofs]
+                [--plot FILE] [--boozer] [--coils NAME] [--currents saved|dofs] [--widths S [--widths-jobs N]]
     torux check SOURCE [SOURCE ...] SURFACE [--flux WB] [--nfp N] [--which NAME] [--coils NAME]
                 [--currents saved|dofs] [--surface-currents saved|dofs] [--mismatched-coils]
     torux many SOURCE [SOURCE ...] --table FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
-               [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs]
+               [--jobs N] [--save DIR] [--coils NAME] [--currents saved|dofs] [--widths S [--widths-jobs N]]
     torux render SOURCE [SOURCE ...] FILE [--flux WB | --minor-radius M | --volume M3 | --largest] [--budget S]
                  [--nfp N] [--kind K] [--dark] [--closed] [--coils NAME] [--currents saved|dofs]
     torux poincare SOURCE [SOURCE ...] [FILE] [--planes DEG [DEG ...]] [--lines N] [--turns N] [--start R,Z]
