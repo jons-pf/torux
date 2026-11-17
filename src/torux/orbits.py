@@ -214,17 +214,100 @@ def solve_closed_line(engine, nfp, q, guess_R, guess_Z, phi0=0.0, K=None, symmet
     return line
 
 
-def line_monodromy(engine, line: ClosedLine, nsteps=None):
-    """q-period map Jacobian at the line's point in the plane phi0, residue (spectral: one field +
-    gradient evaluation along the line, no tracing)."""
+REFINE_REL = 1e-5         # a line is solved again with more Fourier modes until its residue moves by at most this,
+                          # relative, or by at most RESIDUE_FLOOR
+REFINE_STEPS = 7          # at most this many more resolutions, K0 (the first solve's modes) more each
+REFINE_KMAX = 2048        # and never more modes than this
+RESIDUE_FLOOR = 1e-12     # a residue's error is never taken as less than this: below it the monodromy's trace over a
+                          # line of many periods is rounding (on Hammond's second wireframe the residues of 4/23 and
+                          # 5/29 wandered by 1e-14 to 5e-14 between resolutions), and no independent tracer has
+                          # confirmed a residue below it
+
+
+def _spectral(engine, line, nsteps=None):
     L = 2 * np.pi * line.q / line.nfp
-    M, ang = spectral_monodromy(engine, line.a, line.b, line.nfp / line.q, line.phi0, L, nsteps=nsteps,
-                                aR_s=None if line.symmetric else line.aR_s, bZ_c=None if line.symmetric else line.bZ_c)
+    return spectral_monodromy(engine, line.a, line.b, line.nfp / line.q, line.phi0, L, nsteps=nsteps,
+                              aR_s=None if line.symmetric else line.aR_s, bZ_c=None if line.symmetric else line.bZ_c)
+
+
+def _refine(engine, line, M, deadline=None):
+    """The line solved again with K0 more Fourier modes at a time (Newton from the line before), until two resolutions
+    agree on the residue to REFINE_REL (or to RESIDUE_FLOOR: no residue is resolved below it, so the line of a thin
+    chain is not refined to the last mode for digits that are rounding), at most REFINE_STEPS times and REFINE_KMAX
+    modes, and after the first time not past the deadline.  Returns (finest converged line, its monodromy, the last two
+    resolutions' differences of residue and of monodromy entries (None if no second resolution converged), record)."""
+    K0 = line.K
+    rec = dict(K=[K0], residue=[float((2 - np.trace(M)) / 4)])
+    d_res = d_M = None
+    for step in range(REFINE_STEPS):
+        K = line.K + K0
+        if K > REFINE_KMAX or (step > 0 and deadline is not None and time.time() > deadline):
+            break
+        prev = line
+        L2 = solve_closed_line(engine, prev.nfp, prev.q, lambda ph: prev.at(ph)[0], lambda ph: prev.at(ph)[1],
+                               phi0=prev.phi0, K=K, symmetric=prev.symmetric)
+        if not L2.converged:
+            rec["stopped"] = f"not converged with {L2.K} modes (residual {float(L2.res):.2e})"
+            break
+        M2, _ = _spectral(engine, L2)
+        r1, r2 = float((2 - np.trace(M)) / 4), float((2 - np.trace(M2)) / 4)
+        d_res, d_M = abs(r2 - r1), float(np.max(np.abs(M2 - M)))
+        rec["K"].append(L2.K)
+        rec["residue"].append(r2)
+        rec["moved_m"] = float(np.max(np.linalg.norm(L2.section_points(L2.phi0) - prev.section_points(prev.phi0),
+                                                     axis=1)))
+        line, M = L2, M2
+        if d_res <= max(REFINE_REL * abs(r2), RESIDUE_FLOOR):
+            break
+    return line, M, d_res, d_M, rec
+
+
+def line_monodromy(engine, line: ClosedLine, nsteps=None, refine=True, deadline=None):
+    """q-period map Jacobian at the line's point in the plane phi0, residue (spectral: one field +
+    gradient evaluation along the line, no tracing).
+
+    The Galerkin line is only as accurate as its Fourier modes, and its monodromy with it: a line that passes coils
+    near the plasma carries field-period harmonics well beyond the first solve's modes (on a QUASR design of six
+    field periods the 11th harmonic of the period was 1.6e-5 m), and its truncated curve's residue was 18 % off, X
+    and O alike, while the integration's own error was 3e-10.  With refine (the default) the line is solved again
+    with more modes until two resolutions agree on the residue (_refine), and the returned line is the finest:
+    line.info['residue_err'] bounds the residue's error by the last two resolutions' difference, the integration's
+    (two step counts) and the distance of the monodromy's determinant from 1, never less than RESIDUE_FLOOR;
+    line.info['monodromy_err'] the monodromy's entries' likewise (monodromy_err_modes the resolutions' part).  Both
+    are None where no second resolution converged.  A residue within its error has no type (residue_resolved)."""
+    M, ang = _spectral(engine, line, nsteps)
+    d_res = d_M = None
+    if refine and line.converged:
+        line, M, d_res, d_M, rec = _refine(engine, line, M, deadline=deadline)
+        line.info["resolution"] = rec
+        # the integration's error at the finest resolution: twice the steps
+        M2, ang = _spectral(engine, line, 2 * (nsteps or max(64, 2 * line.K)))
+        d_int = float(np.max(np.abs(M2 - M)))
+        M = M2
+        # and the monodromy's own rounding, measured by its determinant, which is exactly 1 at a closed line (the
+        # map keeps the flux R B_phi dR dZ, the same at both ends): on a line of residue 1e-14 the last digits are
+        # all there is
+        d_det = abs(float(np.linalg.det(M)) - 1.0)
+        line.info["monodromy_err_modes"] = d_M
+        line.info["monodromy_err"] = None if d_M is None else d_M + d_int + d_det
+        line.info["residue_err"] = None if d_res is None else max(d_res + 0.5 * d_int + d_det, RESIDUE_FLOOR)
     line.monodromy = M
     line.residue = float((2 - np.trace(M)) / 4)
     line.info["det"] = float(np.linalg.det(M))
     line.info["angle"] = ang
     return line
+
+
+def residue_resolved(line):
+    """Whether a closed line's residue is resolved above its own recorded error (line.info['residue_err'], from
+    line_monodromy): only then do its sign (an O or an X line) and its size (a pendulum half width) mean anything.  A
+    line never refined (no residue_err recorded) is taken as it is; one whose error could not be measured (None) is
+    not resolved."""
+    info = getattr(line, "info", None) or {}
+    if "residue_err" not in info:
+        return True
+    e = info["residue_err"]
+    return e is not None and bool(np.isfinite(e)) and abs(float(line.residue)) > float(e)
 
 
 def line_monodromy_traced(engine, line: ClosedLine, steps_per_period=32, k=6):

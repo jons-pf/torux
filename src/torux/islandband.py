@@ -524,7 +524,9 @@ def line_monodromy_plane(engine, line, phi_s, nsteps=None):
     """Monodromy of the q-period map at the closed line's point in the plane phi_s, from the variational
     equation dY/dphi = DV(X(phi)) Y along the line (torux.orbits.spectral_monodromy, started at phi_s: one
     field + gradient evaluation on a phi grid, trigonometric interpolation of DV, Gauss-Legendre
-    collocation of order 12).  Returns (M, dM): dM = max |M(n) - M(2n)| (two step counts)."""
+    collocation of order 12).  Returns (M, dM): dM = max |M(n) - M(2n)| (two step counts), plus the line's own
+    resolution error where torux.orbits.line_monodromy measured it (monodromy_err_modes: the last two Fourier
+    resolutions' difference; inf where no second resolution converged)."""
     from .orbits import _cyl
     q, nfp = line.q, line.nfp
     L = 2 * np.pi * q / nfp
@@ -573,7 +575,9 @@ def line_monodromy_plane(engine, line, phi_s, nsteps=None):
     ns = nsteps or max(64, 2 * K)
     M1 = integrate(ns)
     M2 = integrate(2 * ns)
-    return M2, float(np.max(np.abs(M1 - M2)))
+    d_modes = line.info.get("monodromy_err_modes", 0.0)      # (absent: a line never refined)
+    d_modes = np.inf if d_modes is None else float(d_modes)
+    return M2, float(np.max(np.abs(M1 - M2))) + d_modes
 
 
 class _few_threads:
@@ -627,8 +631,9 @@ def x_orbit_from_line(sec, engine, line, phi_s, polish=8):
     (closure + tau_q) (Newton-Kantorovich).  The monodromy M (and its error dM, which bounds the unstable
     eigenvector's direction):
     * the line's spectral monodromy (variational equation along the closed line; dM from two step
-      counts) when the polished point is the line's own point to within the Newton-Kantorovich radius --
-      a finite-difference monodromy of the accurate tracer is far too noisy for a weak X line;
+      counts and the line's two finest Fourier resolutions) when the polished point is the line's own point
+      to within the Newton-Kantorovich radius -- a finite-difference monodromy of the accurate tracer is far
+      too noisy for a weak X line;
     * otherwise (the line is only as accurate as its Fourier truncation, ~1e-5 m when started from an
       unconverged surface, and the spectral M along it is then not the orbit's), with a surrogate map: the
       product of its analytic Jacobians along the polished orbit, dM from the accurate tracer's (48 steps
@@ -728,6 +733,28 @@ def x_orbit_from_line(sec, engine, line, phi_s, polish=8):
     orb = BR.Orbit(q, pts, M, e_X=e_X, info=dict(closure=clos, tau_q=tau, inv_norm=nrm, det=float(np.linalg.det(M)),
                                                  monodromy=info["monodromy"], dM=dM_use))
     return orb, info
+
+
+def _finite(x):
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return x if np.isfinite(x) else None
+
+
+def _orbit_residue_err(orb, line):
+    """A bound on the error of the X orbit's residue: with the line's spectral monodromy, the line's own residue
+    error (torux.orbits.line_monodromy: its two finest Fourier resolutions and two step counts) and the difference
+    between the line's residue in its own plane and in the certificate's (the trace is the same in every plane, so
+    that difference is the second integration's error); otherwise half the monodromy's entrywise error (|tr dM| <= 2
+    max |dM|, never less than torux.orbits.RESIDUE_FLOOR).  None where it is not known."""
+    from .orbits import RESIDUE_FLOOR
+    if orb.info.get("monodromy") == "spectral":
+        e = _finite(line.info.get("residue_err"))
+        return None if e is None else e + abs(float(orb.residue) - float(line.residue))
+    e = _finite(orb.info.get("dM"))
+    return None if e is None else max(0.5 * e, RESIDUE_FLOOR)
 
 
 def _richardson_check(fine, x, q, h, M):
@@ -885,7 +912,16 @@ def island_band_certificate_manifold(engine, source, T1, T2, p, q, request, dead
         if Xl and all(abs(l.residue) < MIN_RESIDUE for l in Xl):
             return done(f"chain too weak for the manifold method: X residues "
                         f"{[f'{l.residue:.2e}' for l in Xl]} below {MIN_RESIDUE:.1e} in modulus (lambda - 1 < 3.2e-5)")
-        Xl = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE]
+        # an X line's type must be resolved above its residue's recorded error (torux.orbits.residue_resolved)
+        from .orbits import residue_resolved
+        unres = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE and not residue_resolved(l)]
+        if unres:
+            out["X_unresolved"] = [dict(residue=float(l.residue), residue_err=l.info.get("residue_err")) for l in unres]
+        Xl = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE and residue_resolved(l)]
+        if not Xl and unres:
+            return done(f"no X line whose residue is resolved above its error: residues "
+                        f"{[f'{l.residue:.2e}' for l in unres]}, errors "
+                        f"{[l.info.get('residue_err') for l in unres]}")
         if not Xl:
             if Ol and all(abs(l.residue) < MIN_RESIDUE for l in Ol):
                 return done(f"chain too weak for the manifold method: no symmetric X line, O residues "
@@ -1001,8 +1037,10 @@ def island_band_certificate_manifold(engine, source, T1, T2, p, q, request, dead
         eig = orb.eig()
         out["X_line"] = dict(residue_line=float(Xline.residue), residue=orb.residue, lam=eig["lam"], e_X=orb.e_X,
                              points=orb.pts.tolist(), closure=orb.info["closure"], phi0_line=float(Xline.phi0),
-                             monodromy_err=orb.info.get("dM"), eigvec_angle_err=eigen_error(orb.M, orb.info["dM"]))
-        out["O_line"] = None if O is None else dict(residue=float(O.residue), points=O.section_points(phi_s).tolist())
+                             monodromy_err=orb.info.get("dM"), eigvec_angle_err=eigen_error(orb.M, orb.info["dM"]),
+                             residue_err=_orbit_residue_err(orb, Xline))
+        out["O_line"] = None if O is None else dict(residue=float(O.residue), points=O.section_points(phi_s).tolist(),
+                                                    residue_err=_finite(O.info.get("residue_err")))
         if verbose:
             print(f"  plane phi_s {phi_s:.4f}: X orbit residue {orb.residue:.4e} lambda {eig['lam']:.6f} "
                   f"e_X {orb.e_X:.2e}; axis ({a[0]:.6f}, {a[1]:.2e}) ({time.time() - t0:.0f}s)", flush=True)

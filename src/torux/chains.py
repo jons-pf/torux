@@ -96,6 +96,7 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
         starts.append(th)
     K = K or max(24, 10 * q + 2 * torus.N)
     lines = []
+    seen = []           # (crossings as first solved, their fate): a start that reaches them again is not refined
     for th0 in starts:
         for phi0 in (0.0, math.pi / nfp):
             # the line through the symmetry plane phi0 at theta0 + iota_r phi0 in {0, pi}
@@ -115,8 +116,15 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
                 if verbose:
                     print(f"    chain {p}/{q} start theta0 {th0:.3f} phi0 {phi0:.3f}: not converged ({ln.res:.2e})")
                 continue
-            ln = OR.line_monodromy(engine, ln)
+            pts0 = ln.section_points(0.0)
+            was = next((w for P, w in seen if np.min(np.linalg.norm(pts0[:, None, :] - P[None], axis=-1)) < 1e-8), None)
+            if was == "lower period" and info is not None:
+                info["lower_period"] = info.get("lower_period", 0) + 1
+            if was is not None:
+                continue
+            ln = OR.line_monodromy(engine, ln, deadline=deadline)
             pts = ln.section_points(0.0)
+            seen.append((pts0, "lower period" if not distinct_crossings(pts) else "line"))
             if not distinct_crossings(pts):
                 # a line of lower period gone round q / d times (the magnetic axis is one): not a line of p/q
                 if verbose:
@@ -312,8 +320,11 @@ def analyse_chain(engine, tori, p, q, verbose=False, deadline=None, axis=None):
         ch.info["shear_at"] = dict(index=int(j), n_tori=len(tori), flux=float(fl[j]), iota=float(io[j]))
         if ch.shear != 0:
             ch.flux_r = float(fl[j] + (iota_r - io[j]) / ch.shear)
-    if ch.O and np.isfinite(ch.shear) and ch.shear != 0:
-        RO = max(l.residue for l in ch.O)
+    # the half width the record reports rests only on an elliptic line whose residue is resolved above its error
+    # (torux.orbits.residue_resolved): a residue within its error gives neither a type nor a width
+    O_res = [l for l in ch.O if OR.residue_resolved(l)]
+    if O_res and np.isfinite(ch.shear) and ch.shear != 0:
+        RO = max(l.residue for l in O_res)
         ch.half_width_est = pendulum_half_width(RO, q, nfp, ch.shear)
     if O_newton and np.isfinite(ch.shear) and ch.shear != 0:
         RO = max(l.residue for l in O_newton)

@@ -177,6 +177,7 @@ def symmetric_chain_lines(engine, source, axis, p, q, windows, deadline=None, ns
     nfp = int(source.nfp)
     T = 2 * np.pi / nfp
     lines = []
+    seen = []            # the crossings of every line as first solved (before torux.orbits.line_monodromy refines it)
     sgn = SD.bphi_sign(engine, axis) if sign is None else float(sign)
     info = []
     for (plane, side), (r_lo, r_hi) in windows.items():
@@ -228,7 +229,14 @@ def symmetric_chain_lines(engine, source, axis, p, q, windows, deadline=None, ns
                 info.append(dict(plane=plane, side=side, R=float(R0), winding=float(wind), rejected="newton",
                                  res=float(ln.res)))
                 continue
-            ln = OR.line_monodromy(engine, ln)
+            # a root that reaches a line found already from another (to 1e-8 m, as first solved) is that line: not
+            # solved again with more modes
+            pts0 = ln.section_points(0.0)
+            if any(np.min(np.linalg.norm(pts0[:, None, :] - P[None], axis=-1)) < 1e-8 for P in seen):
+                info.append(dict(plane=plane, side=side, R=float(R0), winding=float(wind), dup=True))
+                continue
+            seen.append(pts0)
+            ln = OR.line_monodromy(engine, ln, deadline=deadline)
             pts = ln.section_points(0.0)
             dup = any(np.min(np.linalg.norm(pts[:, None, :] - o_.section_points(0.0)[None], axis=-1)) < 1e-8
                       for o_ in lines)

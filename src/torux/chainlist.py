@@ -22,6 +22,9 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
                     left out and counted in lines_not_converged
     lines_traced    of its O and X lines, those found by tracing from the symmetric half-lines (torux.chains.
                     traced_chain_lines) where Newton from the family's torus left it with no elliptic line
+    unresolved      its closed lines whose residue lies within the error recorded for it (residue_err, torux.orbits.
+                    line_monodromy): neither O nor X, and no half width rests on them, so a chain whose lines are
+                    all unresolved has no type and no half width
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
@@ -83,6 +86,7 @@ def _base(p, q, nfp, found_in):
 def _line(ln, phi=None):
     out = {}
     _put(out, "residue", _num(ln.get("residue")))
+    _put(out, "residue_err", _num(ln.get("residue_err")))
     sec = ln.get("section", ln.get("points"))
     if sec is not None:
         out["section"] = [[float(v) for v in pt] for pt in sec]
@@ -129,6 +133,16 @@ def _elliptic(res):
     return res is not None and 0 < res < 1
 
 
+def _unresolved(ln):
+    """Whether a closed line's residue lies within its recorded error (residue_err, torux.orbits.line_monodromy), so
+    that neither its type nor a half width can be had from it. A line whose record keeps no error (one never refined,
+    an edge barrier's) is taken as it is; one whose error could not be measured (None) is not resolved."""
+    if "residue_err" not in ln:
+        return False
+    r, e = _num(ln.get("residue")), _num(ln.get("residue_err"))
+    return r is None or e is None or abs(r) <= e
+
+
 # crossings of one closed line nearer each other than this (m) are one: a line whose q crossings are fewer than q
 # distinct points closes after fewer field periods (the magnetic axis, gone round q times, is one), so it is not a
 # line of the chain p/q
@@ -161,7 +175,7 @@ def _family(c, nfp):
         # rested on it taken again from the chain's own elliptic line, or none
         lines = [ln for ln in lines if _own(ln, out["q"])]
         out["lines_of_lower_period"] = len(other)
-        own_O = [_num(ln.get("residue")) for ln in lines if _elliptic(_num(ln.get("residue")))]
+        own_O = [_num(ln.get("residue")) for ln in lines if _elliptic(_num(ln.get("residue"))) and not _unresolved(ln)]
         out.pop("half_width_Wb", None)
         if own_O and out.get("shear") and nfp:
             from .chains import pendulum_half_width
@@ -169,11 +183,15 @@ def _family(c, nfp):
     if c.get("lower_period"):
         # (torux.chains.chain_lines left them out already)
         out["lines_of_lower_period"] = out.get("lines_of_lower_period", 0) + int(c["lower_period"])
+    U = [_line(ln) for ln in lines if _unresolved(ln)]
+    lines = [ln for ln in lines if not _unresolved(ln)]
     O = [_line(ln) for ln in lines if _elliptic(_num(ln.get("residue")))]
     X = [_line(ln) for ln in lines if not _elliptic(_num(ln.get("residue")))]
     if O:
         out["O_residue"] = max(o["residue"] for o in O)
     out["O"], out["X"] = O, X
+    if U:
+        out["unresolved"] = U        # residues within their error: no type, and no half width rests on them
     if c.get("traced_lines"):
         out["lines_traced"] = int(c["traced_lines"])     # (torux.chains.traced_chain_lines) of its lines, found by tracing
     if c.get("cut"):
@@ -206,17 +224,21 @@ def _crossed(c, nfp):
         out["lines_of_lower_period"] = int(c["lower_period"])
     if len(own) < len(lines):
         out["lines_of_lower_period"] = out.get("lines_of_lower_period", 0) + len(lines) - len(own)
-        own_O = [_num(ln.get("residue")) for ln in own if _elliptic(_num(ln.get("residue")))]
+        own_O = [_num(ln.get("residue")) for ln in own if _elliptic(_num(ln.get("residue"))) and not _unresolved(ln)]
         out.pop("half_width_Wb", None)
         if own_O and out.get("shear") and nfp:
             from .chains import pendulum_half_width
             out["half_width_Wb"] = pendulum_half_width(max(own_O), out["q"], float(nfp), out["shear"])
     lines = own
+    U = [_line(ln) for ln in lines if _unresolved(ln)]
+    lines = [ln for ln in lines if not _unresolved(ln)]
     O = [_line(ln) for ln in lines if _elliptic(_num(ln.get("residue")))]
     X = [_line(ln) for ln in lines if not _elliptic(_num(ln.get("residue")))]
     if O:
         out["O_residue"] = max(o["residue"] for o in O)
     out["O"], out["X"] = O, X
+    if U:
+        out["unresolved"] = U        # residues within their error: no type, and no half width rests on them
     lo, hi = _num(c.get("inner_Wb")), _num(c.get("outer_Wb"))
     if lo is not None and hi is not None and (c.get("between_verified") is not False):
         # its lines checked between them, or (no line found) its rational between theirs: Poincare-Birkhoff puts
@@ -360,8 +382,9 @@ def _key(c):
 
 def _richness(c):
     # a stepped-across chain's numbers first: its flux between tori either side and its shear from both sides
-    return (c["found_in"] == CROSSED and bool(c.get("O") or c.get("X")), c["found_in"] in (FAMILY, CROSSED),
-            "half_width_Wb" in c, "flux_Wb" in c, sum(len(c.get(k) or []) for k in ("O", "X")))
+    return (c["found_in"] == CROSSED and bool(c.get("O") or c.get("X") or c.get("unresolved")),
+            c["found_in"] in (FAMILY, CROSSED), "half_width_Wb" in c, "flux_Wb" in c,
+            sum(len(c.get(k) or []) for k in ("O", "X", "unresolved")))
 
 
 def merge(lists):
@@ -384,6 +407,16 @@ def merge(lists):
     return out
 
 
+def _residue_errs(out, c):
+    """Each certificate line's residue_err (a bound on its residue's error, torux.orbits.line_monodromy), where the
+    record keeps one: the X line's, the O line's, the edge barrier's orbit's."""
+    src = dict(X=c.get("X_line") if isinstance(c.get("X_line"), dict) else c.get("orbit"), O=c.get("O_line"))
+    for ln in out.get("lines") or []:
+        s = src.get(ln.get("role"))
+        if isinstance(s, dict) and _num(s.get("residue_err")) is not None:
+            ln["residue_err"] = _num(s["residue_err"])
+
+
 def _pts(points):
     try:
         P = np.asarray(points, float).reshape(-1, 2)
@@ -401,8 +434,9 @@ def _cert_line(p, q, residue, points, plane_phi, ln=None):
 def provenance(c):
     """What a certificate record (one that holds: ok) rests on, for a reader with a tracer of their own: dict(
     construction, the theorem's name in docs/verification.md's words; lines, the closed field lines it is built on,
-    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane; interval_Wb or
-    bound_Wb). None for a record that does not hold. A lost ring rests on no closed line (lines [])."""
+    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane, and residue_err, a
+    bound on the residue's error, where the record keeps one; interval_Wb or bound_Wb). None for a record that does
+    not hold. A lost ring rests on no closed line (lines [])."""
     if not isinstance(c, dict) or not c.get("ok"):
         return None
     kind = str(c.get("kind") or "")
@@ -441,6 +475,7 @@ def provenance(c):
                     sub = provenance(c.get(k))
                     if sub is not None:
                         return dict(sub, **{k_: v for k_, v in out.items() if k_ not in sub})
+    _residue_errs(out, c)
     iv = c.get("interval")
     if isinstance(iv, (list, tuple)) and len(iv) == 2 and all(_num(v) is not None for v in iv):
         out["interval_Wb"] = sorted(abs(_num(v)) for v in iv)

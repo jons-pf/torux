@@ -113,9 +113,10 @@ def place(lines, verified):
 
 
 def _line_record(ln, phi=0.0):
-    from .analysis import _monodromy
+    from .analysis import _monodromy, _residue_err
     return dict(residue=float(ln.residue), res=float(ln.res), section=line_points(ln, phi)[0].tolist(), plane_phi=phi,
-                **(_monodromy(ln) if phi == 0.0 else {}))
+                **(_monodromy(ln) if phi == 0.0 else {}), **_residue_err(ln))
+
 
 
 def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, deadline=None, exclude=(),
@@ -125,6 +126,7 @@ def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, 
     between calls (filled here).  Stops at the deadline: the chains not reached then are listed with their
     rational and the family tori either side only (cut=True)."""
     from .chains import chain_lines, pendulum_half_width
+    from .orbits import residue_resolved
     from .analysis import range_candidate, torus_topology
     verified = {} if verified is None else verified
     t0 = time.time()
@@ -217,7 +219,8 @@ def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, 
         if away:
             rec["lines_elsewhere"] = away
         rec["lines"] = [_line_record(ln) for ln in kept]
-        O = [ln for ln in kept if 0 < ln.residue < 1]
+        # (an elliptic line whose residue is resolved above its error: torux.orbits.residue_resolved)
+        O = [ln for ln in kept if 0 < ln.residue < 1 and residue_resolved(ln)]
         if O and np.isfinite(shear) and shear:
             RO = max(ln.residue for ln in O)
             rec["half_width_est"] = pendulum_half_width(RO, q, nfp, shear)

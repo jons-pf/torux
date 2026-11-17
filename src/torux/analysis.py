@@ -1129,13 +1129,21 @@ def _monodromy(line):
     return dict(monodromy=np.asarray(M, float).tolist())
 
 
+def _residue_err(line):
+    """A closed line's residue_err (torux.orbits.line_monodromy) as its record keeps it: None where it was refined but
+    could not be measured, absent where it was never refined."""
+    info = getattr(line, "info", None) or {}
+    return {"residue_err": info["residue_err"]} if "residue_err" in info else {}
+
+
 def chain_record(ch):
     """A chain the family met (torux.chains.Chain), as the record keeps it: p/q, the resonance's iota, flux and shear,
     the pendulum half width, and each closed line's residue, Newton residual and crossings (R, Z) of the plane
     phi = 0 (R0 the first of them). shear_at: the family torus the shear was taken at."""
     return dict(p=ch.p, q=ch.q, iota_r=ch.iota_r, flux_r=ch.flux_r, shear=ch.shear, half_width_est=ch.half_width_est,
                 lines=[dict(residue=l.residue, R0=l.section_points(0.0)[0].tolist(), res=l.res,
-                            section=l.section_points(0.0).tolist(), **_monodromy(l)) for l in ch.lines],
+                            section=l.section_points(0.0).tolist(), **_monodromy(l), **_residue_err(l))
+                       for l in ch.lines],
                 **({"shear_at": ch.info["shear_at"]} if ch.info.get("shear_at") else {}),
                 **({"lower_period": int(ch.info["lower_period"])} if ch.info.get("lower_period") else {}),
                 **({"traced_lines": int(ch.info["traced_lines"])} if ch.info.get("traced_lines") else {}),
@@ -1177,7 +1185,8 @@ def certify_request(eng, cont, brackets, request, tol=3e-15, deadline=None, verb
         O, I = best
         c = island_band_certificate(T1r, T2r, I, O, request_flux=request)
         c.update(kind=c.get("kind") or "island_band", chain=(ch.p, ch.q), O_residue=O.residue,
-                 O_line=dict(residue=float(O.residue), points=O.section_points(0.0).tolist(), plane_phi=0.0),
+                 O_line=dict(residue=float(O.residue), points=O.section_points(0.0).tolist(), plane_phi=0.0,
+                             residue_err=O.info.get("residue_err")),
                  T1=torus_record(T1r), T2=torus_record(T2r),
                  island=dict(flux=float(I.flux), iota=float(I.iota), M=int(I.M), N=int(I.N), bn_off=float(I.bn_off)),
                  T1_bn=float(T1r.bn_off), T2_bn=float(T2r.bn_off))
@@ -1505,7 +1514,8 @@ def band_between(eng, cont, T1, T2, request, tol=3e-15, qmax=60, deadline=None, 
         ln, I = best
         c = island_band_certificate(T1r, T2r, I, ln, request_flux=request)
         c.update(kind="island_band", chain=(p, q), O_residue=float(ln.residue),
-                 O_line=dict(residue=float(ln.residue), points=ln.section_points(0.0).tolist(), plane_phi=0.0),
+                 O_line=dict(residue=float(ln.residue), points=ln.section_points(0.0).tolist(), plane_phi=0.0,
+                             residue_err=ln.info.get("residue_err")),
                  T1=torus_record(T1r),
                  T2=torus_record(T2r), island=dict(flux=float(I.flux), iota=float(I.iota), M=int(I.M), N=int(I.N),
                                                     bn_off=float(I.bn_off)))
