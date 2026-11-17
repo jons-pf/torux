@@ -312,8 +312,11 @@ def analyse_chain(engine, tori, p, q, verbose=False, deadline=None, axis=None):
         ch.info["shear_at"] = dict(index=int(j), n_tori=len(tori), flux=float(fl[j]), iota=float(io[j]))
         if ch.shear != 0:
             ch.flux_r = float(fl[j] + (iota_r - io[j]) / ch.shear)
-    if ch.O and np.isfinite(ch.shear) and ch.shear != 0:
-        RO = max(l.residue for l in ch.O)
+    # the half width the record reports rests only on an elliptic line whose residue is resolved above its error
+    # (torux.orbits.residue_resolved): a residue within its error gives neither a type nor a width
+    O_res = [l for l in ch.O if OR.residue_resolved(l)]
+    if O_res and np.isfinite(ch.shear) and ch.shear != 0:
+        RO = max(l.residue for l in O_res)
         ch.half_width_est = pendulum_half_width(RO, q, nfp, ch.shear)
     if O_newton and np.isfinite(ch.shear) and ch.shear != 0:
         RO = max(l.residue for l in O_newton)

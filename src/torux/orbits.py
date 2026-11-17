@@ -218,6 +218,10 @@ REFINE_REL = 1e-5         # a line is solved again with more Fourier modes until
 REFINE_ABS = 1e-14        # relative, or by this absolutely
 REFINE_STEPS = 7          # at most this many more resolutions, K0 (the first solve's modes) more each
 REFINE_KMAX = 2048        # and never more modes than this
+RESIDUE_FLOOR = 1e-12     # a residue's error is never taken as less than this: below it the monodromy's trace over a
+                          # line of many periods is rounding (on Hammond's second wireframe the residues of 4/23 and
+                          # 5/29 wandered by 1e-14 to 5e-14 between resolutions), and no independent tracer has
+                          # confirmed a residue below it
 
 
 def _spectral(engine, line, nsteps=None):
@@ -266,9 +270,10 @@ def line_monodromy(engine, line: ClosedLine, nsteps=None, refine=True, deadline=
     field periods the 11th harmonic of the period was 1.6e-5 m), and its truncated curve's residue was 18 % off, X
     and O alike, while the integration's own error was 3e-10.  With refine (the default) the line is solved again
     with more modes until two resolutions agree on the residue (_refine), and the returned line is the finest:
-    line.info['residue_err'] bounds the residue's error by the last two resolutions' difference and the
-    integration's (two step counts), line.info['monodromy_err'] the monodromy's entries' likewise
-    (monodromy_err_modes the resolutions' part).  Both are None where no second resolution converged."""
+    line.info['residue_err'] bounds the residue's error by the last two resolutions' difference, the integration's
+    (two step counts) and the distance of the monodromy's determinant from 1, never less than RESIDUE_FLOOR;
+    line.info['monodromy_err'] the monodromy's entries' likewise (monodromy_err_modes the resolutions' part).  Both
+    are None where no second resolution converged.  A residue within its error has no type (residue_resolved)."""
     M, ang = _spectral(engine, line, nsteps)
     d_res = d_M = None
     if refine and line.converged:
@@ -278,14 +283,30 @@ def line_monodromy(engine, line: ClosedLine, nsteps=None, refine=True, deadline=
         M2, ang = _spectral(engine, line, 2 * (nsteps or max(64, 2 * line.K)))
         d_int = float(np.max(np.abs(M2 - M)))
         M = M2
+        # and the monodromy's own rounding, measured by its determinant, which is exactly 1 at a closed line (the
+        # map keeps the flux R B_phi dR dZ, the same at both ends): on a line of residue 1e-14 the last digits are
+        # all there is
+        d_det = abs(float(np.linalg.det(M)) - 1.0)
         line.info["monodromy_err_modes"] = d_M
-        line.info["monodromy_err"] = None if d_M is None else d_M + d_int
-        line.info["residue_err"] = None if d_res is None else d_res + 0.5 * d_int
+        line.info["monodromy_err"] = None if d_M is None else d_M + d_int + d_det
+        line.info["residue_err"] = None if d_res is None else max(d_res + 0.5 * d_int + d_det, RESIDUE_FLOOR)
     line.monodromy = M
     line.residue = float((2 - np.trace(M)) / 4)
     line.info["det"] = float(np.linalg.det(M))
     line.info["angle"] = ang
     return line
+
+
+def residue_resolved(line):
+    """Whether a closed line's residue is resolved above its own recorded error (line.info['residue_err'], from
+    line_monodromy): only then do its sign (an O or an X line) and its size (a pendulum half width) mean anything.  A
+    line never refined (no residue_err recorded) is taken as it is; one whose error could not be measured (None) is
+    not resolved."""
+    info = getattr(line, "info", None) or {}
+    if "residue_err" not in info:
+        return True
+    e = info["residue_err"]
+    return e is not None and bool(np.isfinite(e)) and abs(float(line.residue)) > float(e)
 
 
 def line_monodromy_traced(engine, line: ClosedLine, steps_per_period=32, k=6):

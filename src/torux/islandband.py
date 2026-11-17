@@ -748,12 +748,13 @@ def _orbit_residue_err(orb, line):
     error (torux.orbits.line_monodromy: its two finest Fourier resolutions and two step counts) and the difference
     between the line's residue in its own plane and in the certificate's (the trace is the same in every plane, so
     that difference is the second integration's error); otherwise half the monodromy's entrywise error (|tr dM| <= 2
-    max |dM|).  None where it is not known."""
+    max |dM|, never less than torux.orbits.RESIDUE_FLOOR).  None where it is not known."""
+    from .orbits import RESIDUE_FLOOR
     if orb.info.get("monodromy") == "spectral":
         e = _finite(line.info.get("residue_err"))
         return None if e is None else e + abs(float(orb.residue) - float(line.residue))
     e = _finite(orb.info.get("dM"))
-    return None if e is None else 0.5 * e
+    return None if e is None else max(0.5 * e, RESIDUE_FLOOR)
 
 
 def _richardson_check(fine, x, q, h, M):
@@ -911,7 +912,16 @@ def island_band_certificate_manifold(engine, source, T1, T2, p, q, request, dead
         if Xl and all(abs(l.residue) < MIN_RESIDUE for l in Xl):
             return done(f"chain too weak for the manifold method: X residues "
                         f"{[f'{l.residue:.2e}' for l in Xl]} below {MIN_RESIDUE:.1e} in modulus (lambda - 1 < 3.2e-5)")
-        Xl = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE]
+        # an X line's type must be resolved above its residue's recorded error (torux.orbits.residue_resolved)
+        from .orbits import residue_resolved
+        unres = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE and not residue_resolved(l)]
+        if unres:
+            out["X_unresolved"] = [dict(residue=float(l.residue), residue_err=l.info.get("residue_err")) for l in unres]
+        Xl = [l for l in Xl if abs(l.residue) >= MIN_RESIDUE and residue_resolved(l)]
+        if not Xl and unres:
+            return done(f"no X line whose residue is resolved above its error: residues "
+                        f"{[f'{l.residue:.2e}' for l in unres]}, errors "
+                        f"{[l.info.get('residue_err') for l in unres]}")
         if not Xl:
             if Ol and all(abs(l.residue) < MIN_RESIDUE for l in Ol):
                 return done(f"chain too weak for the manifold method: no symmetric X line, O residues "

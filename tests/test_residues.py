@@ -68,3 +68,33 @@ def test_a_certificates_lines_say_how_well_their_residues_are_known():
     assert X["residue_err"] == 3e-11 and "residue_err" not in O
     assert _line(dict(residue=2e-5, residue_err=1e-12, section=pts))["residue_err"] == 1e-12
     assert "residue_err" not in _line(dict(residue=2e-5, section=pts))
+
+
+def test_a_residue_within_its_error_gives_no_type_and_no_half_width():
+    """A chain's line whose residue lies within the error recorded for it (as on Hammond's second wireframe, where
+    0.2.2 called the lines of 4/23 elliptic with residue 1.4e-7 and an independent tracer finds them parabolic to
+    2e-13) is listed as unresolved, neither O nor X, and no half width rests on it; the search's words say so."""
+    from torux.ask import _unresolved_words
+    from torux.chainlist import _crossed
+    from torux.orbits import ClosedLine, residue_resolved
+    ring = [[1.2 + 0.01 * math.cos(2 * math.pi * k / 5), 0.01 * math.sin(2 * math.pi * k / 5)] for k in range(5)]
+    rec = dict(p=2, q=5, flux_r=0.003, shear=-0.36, half_width_est=None, inner_Wb=0.0027, outer_Wb=0.0072,
+               between_verified=True, lines=[dict(residue=1.4e-7, residue_err=3e-7, section=ring),
+                                             dict(residue=-1.2e-7, residue_err=None, section=ring[1:] + ring[:1])])
+    c = _crossed(rec, 2)
+    assert c["O"] == [] and c["X"] == [] and len(c["unresolved"]) == 2
+    assert "half_width_Wb" not in c and "O_residue" not in c
+    assert _unresolved_words(c) == "2 lines whose residues lie within their errors, so no type and no half width"
+    # resolved lines keep their type; a line never refined (no error recorded) is taken as it is
+    rec["lines"] = [dict(residue=1.4e-5, residue_err=3e-12, section=ring),
+                    dict(residue=-1.4e-5, section=ring[1:] + ring[:1])]
+    c = _crossed(rec, 2)
+    assert len(c["O"]) == 1 and len(c["X"]) == 1 and "unresolved" not in c
+    ln = ClosedLine(5, 2, 0.0, np.zeros(3), np.zeros(3), residue=1e-9)
+    assert residue_resolved(ln)
+    ln.info["residue_err"] = 2e-9
+    assert not residue_resolved(ln)
+    ln.info["residue_err"] = None
+    assert not residue_resolved(ln)
+    ln.info["residue_err"] = 1e-12
+    assert residue_resolved(ln)

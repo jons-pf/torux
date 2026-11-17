@@ -354,6 +354,17 @@ def _placed(c):
     return f"inside the verified surface at {iv[1]:.4g} Wb"
 
 
+def _unresolved_words(c):
+    """A chain's lines whose residues lie within their errors (torux.chainlist's unresolved), in words ('' if none)."""
+    u = c.get("unresolved") or []
+    if not u:
+        return ""
+    what = "no type and no half width" if not (c.get("O") or c.get("X")) else "neither O nor X"
+    if len(u) == 1:
+        return f"1 line whose residue lies within its error, so {what}"
+    return f"{len(u)} lines whose residues lie within their errors, so {what}"
+
+
 def _chain_words(chains):
     """The chains a search met, in a line, and the ones the answer's family stepped across in another."""
     crossed = [c for c in chains if "stepped across" in c["found_in"]]
@@ -371,6 +382,8 @@ def _chain_words(chains):
                              else " by extrapolation")
             if c.get("half_width_Wb") is not None:
                 name += f", half width about {c['half_width_Wb']:.1e} Wb"
+            elif _unresolved_words(c):
+                name += f", {_unresolved_words(c)}"
             where = _placed(c)
             if where:
                 name += f", its lines {where}"
@@ -388,7 +401,7 @@ def _chain_words(chains):
                 name += f" at {c['flux_Wb']:.4g} Wb"
             more_ = [w for w in (_placed(c),
                                  f"half width about {c['half_width_Wb']:.1e} Wb" if c.get("half_width_Wb") is not None
-                                 else "") if w]
+                                 else _unresolved_words(c)) if w]
             if c.get("cut"):
                 more_.append("cut short by the budget")
             parts.append(name + (f" ({', '.join(more_)})" if more_ else ""))
