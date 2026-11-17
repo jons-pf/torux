@@ -73,8 +73,8 @@ def many(sources, flux=None, *, minor_radius=None, volume=None, largest=False, j
               source, in order, None for one that needs none
     widths_s, widths_jobs
               with the largest: seconds of their own, for each design, for closing in on its chains with verified
-              surfaces (torux.widths), and the requests each design runs at once (default: the cores left to each
-              design). The table's chain_brackets holds the brackets
+              surfaces (torux.widths), and the requests each design runs at once (default 1), each on
+              TORUX_THREADS cores of its own. The table's chain_brackets holds the brackets
     The rest are torux.solve's.  A design that fails is an answer with status 'error' and the reason.  A design
     already in the table comes back as the answer saved for it in ``save`` when that folder holds it, else None."""
     return _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, None,
@@ -278,9 +278,9 @@ def _run(sources, flux, jobs, table, save, budget_s, tol, verify, gradients, rep
         todo = [it for it in items if it.answer is None and not it.skip]
         at_once = min(jobs, len(todo))
         if widths[0] is not None:
-            # each design's closing in runs its own requests: by default the cores left to it
+            # each design's closing in runs its own requests, widths_jobs at once (default one)
             args["widths_s"] = float(widths[0])
-            args["widths_jobs"] = widths[1] if widths[1] is not None else max(1, (cores // threads) // max(1, at_once))
+            args["widths_jobs"] = widths[1]
         if report is not None and todo:
             report.starting(len(todo), at_once)
         shared = at_once * threads > cores

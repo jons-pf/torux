@@ -118,8 +118,8 @@ def widths_args(s):
     s.add_argument("--widths", type=float, metavar="S", help="with --largest: close in on every island chain of the "
                                                              "answer with verified surfaces either side, in S seconds "
                                                              "of its own (each chain's bracket)")
-    s.add_argument("--widths-jobs", type=int, metavar="N", help="requests the closing in runs at once (default: the "
-                                                                "cores over TORUX_THREADS)")
+    s.add_argument("--widths-jobs", type=int, metavar="N", help="requests the closing in runs at once, each on "
+                                                                "TORUX_THREADS cores of its own (default 1)")
 
 
 def _say(text):

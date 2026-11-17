@@ -561,10 +561,9 @@ class Processes:
         self.tmp.cleanup()
 
 
-def default_jobs():
-    """Processes at once: the cores this process may use divided by the threads each solve uses."""
-    from .batch import _cores, _threads
-    return max(1, _cores() // _threads())
+# requests at once when not asked: one. More, each on TORUX_THREADS cores of its own, is for whoever knows the cores
+# they were given: the cores a process may use need not be the ones it was allotted on a shared machine
+JOBS = 1
 
 
 def attach(chains, results):
@@ -623,7 +622,7 @@ def stage(S, r, widths_s, jobs=None, verbose=False):
         if b is not None and (bound is None or b < bound):
             bound = float(b)
     st = Stage(chains, tori, axis=axis, failed=list(S.failed), bound=bound, verbose=verbose)
-    jobs = default_jobs() if jobs is None else int(jobs)
+    jobs = JOBS if jobs is None else int(jobs)
     runner = Processes(S.src, jobs, S.opts)
     wall = st.run(runner, t0 + float(widths_s))
     surfaces = []

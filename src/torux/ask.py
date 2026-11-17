@@ -66,7 +66,7 @@ def solve(source, flux=None, *, minor_radius=None, volume=None, largest=False, b
     """The flux surface of ``source`` asked for by one of ``flux`` (Wb), ``minor_radius`` (m), ``volume`` (m^3)
     or ``largest``. With none of them the source's own request, else the largest surface torux can verify.
     widths_s (largest only): seconds of its own for closing in on every chain of the answer with verified surfaces
-    (torux.widths), widths_jobs requests at once (default: the cores over the threads of a solve)."""
+    (torux.widths), widths_jobs requests at once (default 1)."""
     from .api import Request
     one_question(flux, minor_radius, volume, largest)
     widths = widths_question(widths_s, widths_jobs, flux, minor_radius, volume, largest)

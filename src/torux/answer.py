@@ -54,7 +54,8 @@ def solve(source, flux=None, *, minor_radius=None, volume=None, largest=False, b
     anything torux.load reads, a torux.Source or a torux.Request. ``budget_s``: seconds for the whole question.
     ``widths_s`` (with the largest): seconds of their own for closing in on each island chain of the answer with
     verified surfaces either side, its bracket in answer.evidence['chains'] (torux.widths); ``widths_jobs`` the
-    requests it runs at once (default: the cores over the threads of a solve)."""
+    requests it runs at once, each on TORUX_THREADS cores of its own (default 1: give the cores you
+    have over TORUX_THREADS)."""
     from . import ask
     from .source import Source
     if isinstance(source, Request):
