@@ -202,3 +202,53 @@ def test_the_table_has_its_brackets_column_only_when_widths_is_asked(tmp_path):
     t = batch._Table(str(tmp_path / "b.csv"), [], "largest")
     assert t.cols == batch.COLUMNS_WIDTHS
     t.close()
+
+
+def test_the_search_attaches_each_bracket_to_its_chain_and_says_so(monkeypatch):
+    """After the largest search, the stage's brackets reach answer.evidence['chains'], its summary
+    answer.evidence['search']['widths'] and a line of the words; without widths_s there is none of it."""
+    import time as _time
+    from torux import api
+    surf = _circle(0.10, -0.21)
+    entry = dict(flux=float(surf.flux), wall_s=1.0, chains=[dict(_chain(0.07), found_in="stepped across", request=1)])
+
+    def answer(widths_on):
+        S = ask._Search(types.SimpleNamespace(id="coils", request=None, nfp=NFP), "largest", None, 100.0, {})
+        r = api.Result("surface", 100.0, 0.1, surface=surf, iota=-0.21, record=dict(nfp=NFP))
+        r._ask_entry = dict(entry)
+        S.log.append(r._ask_entry)
+        if widths_on:
+            S.widths_asked = (60.0, 1)
+            ask._widths_stage(S, r)
+        return S.finish(r, [])
+
+    def stage(S, r, secs, jobs=None, verbose=False):
+        return ({(1, 11, 0): dict(inner_Wb=1e-3, outer_Wb=1.1e-3, one_sided=False, half_width_Wb=5e-5,
+                                  flux_Wb=1.05e-3, requests=3, stop=dict(inner="closed", outer="closed"))},
+                dict(budget_s=secs, wall_s=1.0, chains=1, two_sided=1, one_sided=0, requests=3, closed=2))
+    monkeypatch.setattr(widths, "stage", stage)
+    monkeypatch.setattr(ask, "say", None)
+    on = answer(True)
+    c = on.evidence["chains"][0]
+    assert c["bracket"]["inner_Wb"] == 1e-3 and on.evidence["search"]["widths"]["requests"] == 3
+    assert any(w.startswith("chain widths: 1 of 1 chains bracketed") for w in on.evidence["search"]["words"])
+    off = answer(False)
+    assert "bracket" not in off.evidence["chains"][0] and "widths" not in off.evidence["search"]
+    assert not any("chain widths" in w for w in off.evidence["search"]["words"])
+
+
+@pytest.mark.slow
+def test_cnt_64_degrees_ratio_4_5_brackets_hold_the_traced_layers():
+    """CNT at 64 degrees, I_IL / I_PF = 4.5, the largest with widths: the brackets of iota = -2/11 and -1/5 hold the
+    separatrix layers an independent tracer found (closed-form circular coils, RK4: -2/11 from 8.56742e-4 to
+    8.59653e-4 Wb, -1/5 from 2.011599e-3 to 2.077986e-3 Wb, their edges good to 1e-7 and 3e-7 Wb), and are narrower than
+    the family tori they started from."""
+    import torux
+    from test_crossed import _cnt
+    a = torux.solve(_cnt(64, 4.5), largest=True, budget_s=900, widths_s=2400)
+    got = {(c["p"], c["q"]): c for c in a.evidence["chains"] if c.get("bracket")}
+    for pq, (lo, hi), tol in (((-1, 11), (8.56742e-4, 8.59653e-4), 1e-7), ((-1, 10), (2.011599e-3, 2.077986e-3), 3e-7)):
+        b = got[pq]["bracket"]
+        assert b["inner_Wb"] <= lo + tol and b["outer_Wb"] >= hi - tol, (pq, b)
+        assert b["outer_Wb"] - b["inner_Wb"] < b["start_Wb"][1] - b["start_Wb"][0], (pq, b)
+    assert a.evidence["search"]["widths"]["surfaces"]

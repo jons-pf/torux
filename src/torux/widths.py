@@ -593,7 +593,8 @@ def table_cell(chains):
 
 def words(summary):
     if summary.get("error"):
-        return f"chain widths: the closing in ended in an error after {summary.get('wall_s', 0):.0f} s ({summary['error']})"
+        return (f"chain widths: the closing in ended in an error after {summary.get('wall_s', 0):.0f} s "
+                f"({summary['error']})")
     n, k = summary.get("chains", 0), summary.get("closed", 0)
     return (f"chain widths: {summary.get('two_sided', 0)} of {n} chains bracketed on both sides and "
             f"{summary.get('one_sided', 0)} on the inner side only, by {summary.get('requests', 0)} requests in "
