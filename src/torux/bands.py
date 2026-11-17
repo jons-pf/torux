@@ -19,7 +19,8 @@ surface's section, never by iota), and then:
                     reported:          [==========*=========]          |
                                        flux_Wb +- half_width_Wb, now about the middle of what is left
 
-                    flux_Wb and half_width_Wb are then the middle and half of what is left, flux_estimate_Wb and
+                    flux_Wb and half_width_Wb are then the middle and half of what is left (a cut end CUT_REL
+                    inside its surface, so that no rounding of the surface's flux puts it inside), flux_estimate_Wb and
                     half_width_pendulum_Wb the estimate as it was, band_cut_Wb the surfaces that cut it.  Where the
                     estimated flux itself lies beyond a surface placed by the crossings (its interpolation in iota is
                     contradicted by the chain's own lines), or a surface that cannot be placed lies inside the band,
@@ -41,6 +42,7 @@ import numpy as np
 from .widths import inside, line_margin, section, SAG_SAFETY
 
 REL_SAME = 1e-13          # two surfaces whose fluxes agree to this are one
+CUT_REL = 1e-15           # a band cut at a surface ends this far inside it, relative to its flux
 
 
 def lines_of(c):
@@ -183,7 +185,9 @@ def fit_chain(c, surfaces):
                       f"{s.flux:.10g} Wb, which the chain's crossings put {'inside' if f <= a else 'outside'} it")
             did = "withdrawn"
         else:
-            lo_b, hi_b = max(f - h, a), min(f + h, b)
+            # (a cut end kept CUT_REL inside its surface: the flux a request asked and the flux of the surface it
+            # verified can differ in their last digits, and the band holds neither)
+            lo_b, hi_b = max(f - h, a * (1 + CUT_REL)), min(f + h, b * (1 - CUT_REL))
             inner = [u["flux_Wb"] for u in unplaced if lo_b < u["flux_Wb"] < hi_b]
             if inner:
                 _withdraw(c, f, h, f"verified surfaces at {_list(inner)} Wb lie inside the estimate, and the chain's "
@@ -192,7 +196,7 @@ def fit_chain(c, surfaces):
             elif lo_b > f - h or hi_b < f + h:
                 c["flux_estimate_Wb"], c["half_width_pendulum_Wb"] = f, h
                 c["flux_Wb"], c["half_width_Wb"] = middle(lo_b, hi_b)
-                c["band_cut_Wb"] = [lo_b if lo_b > f - h else None, hi_b if hi_b < f + h else None]
+                c["band_cut_Wb"] = [a if lo_b > f - h else None, b if hi_b < f + h else None]
                 c.pop("band_withdrawn", None)
                 did = "cut"
             else:

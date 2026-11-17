@@ -160,6 +160,14 @@ def test_a_band_cut_at_a_surface_never_holds_it_by_a_rounding():
         hi = lo * (1 + float(rng.uniform(1e-12, 1.0)))
         m, h = bands.middle(lo, hi)
         assert m - h >= lo and m + h <= hi and h >= 0.5 * (hi - lo) * (1 - 1e-12)
+    # and a cut end lies inside its surface by more than the last digits in which the flux a request asked and the
+    # flux of the surface it verified differ (on CNT, 1.0864629342586662e-3 asked, ...664 verified)
+    f = _f(0.07)
+    c = _chain(flux=f, half=_f(0.0702) - f)
+    S = _pool(0.0701)
+    bands.fit_chain(c, S)
+    asked = float(np.nextafter(np.nextafter(S[0].flux, 0.0), 0.0))
+    assert c["flux_Wb"] + c["half_width_Wb"] < asked and c["band_cut_Wb"] == [None, S[0].flux]
 
 
 def test_a_surface_not_around_the_axis_is_never_placed():
