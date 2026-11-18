@@ -98,3 +98,48 @@ def test_a_residue_within_its_error_gives_no_type_and_no_half_width():
     assert not residue_resolved(ln)
     ln.info["residue_err"] = 1e-12
     assert residue_resolved(ln)
+
+
+def test_the_stepped_across_stage_finds_every_chains_lines_before_it_refines_them(monkeypatch):
+    """With refine_s the stage finds each chain's lines as 0.2.2 did, unrefined, and refines them afterwards in their
+    own time, the lowest q first; a line it has no time left for keeps residue_err None (unresolved) and is counted."""
+    import time
+    import types
+    from torux import analysis, chains, crossed, orbits
+    from torux.orbits import ClosedLine
+
+    tori = [types.SimpleNamespace(flux=1e-4 * k, iota=io, nfp=2)
+            for k, io in enumerate((-0.16, -0.17, -0.19), start=1)]
+    calls = []
+
+    def lines(engine, start, p, q, deadline=None, info=None, refine=True):
+        calls.append(("find", q, refine))
+        return [ClosedLine(q, 2, 0.0, np.zeros(3), np.zeros(3), residue=0.01) for _ in range(2)]
+
+    def refine(engine, ln, deadline=None, **kw):
+        calls.append(("refine", ln.q))
+        ln.info["residue_err"] = 1e-12
+        return ln
+    monkeypatch.setattr(chains, "chain_lines", lines)
+    monkeypatch.setattr(orbits, "line_monodromy", refine)
+    monkeypatch.setattr(analysis, "range_candidate", lambda *a, **k: dict(ok=False))
+    monkeypatch.setattr(crossed, "between", lambda *a, **k: True)
+    monkeypatch.setattr(crossed, "_line_record", lambda ln, phi=0.0: dict(residue=ln.residue,
+                                                                          residue_err=ln.info.get("residue_err")))
+    recs = crossed.crossed_chains(None, None, None, tori, None, 0.05, 3e-15, 2, qmax=12, refine_s=60.0)
+    qs = [r["q"] for r in recs]
+    assert qs == sorted(qs) and len(qs) >= 2
+    finds = [c for c in calls if c[0] == "find"]
+    assert all(not c[2] for c in finds)                                   # found unrefined, as 0.2.2 found them
+    assert calls.index(("refine", qs[0])) > max(i for i, c in enumerate(calls) if c[0] == "find")
+    assert all(ln["residue_err"] == 1e-12 for r in recs for ln in r["lines"])
+    assert not any("lines_unrefined" in r for r in recs)
+    # time for one refinement only: the lines left keep residue_err None (unresolved), and each chain counts them
+    def slow(engine, ln, deadline=None, **kw):
+        time.sleep(0.2)
+        return refine(engine, ln, deadline=deadline)
+    monkeypatch.setattr(orbits, "line_monodromy", slow)
+    recs = crossed.crossed_chains(None, None, None, tori, None, 0.05, 3e-15, 2, qmax=12, refine_s=0.1)
+    assert recs[0]["lines_unrefined"] == 1 and all(r["lines_unrefined"] == 2 for r in recs[1:])
+    errs = [ln["residue_err"] for r in recs for ln in r["lines"]]
+    assert errs[0] == 1e-12 and all(e is None for e in errs[1:])

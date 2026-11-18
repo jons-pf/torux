@@ -475,7 +475,7 @@ def test_largest_hsx():
     print(f"\n{res.status} {s['flux']!r} Wb in {wall:.0f} s of {s['budget_s']:.0f}:\n  " + "\n  ".join(s["words"])
           + "\n" + "\n".join(map(str, s["requests"])))
     assert res.status == "surface" and s["flux"] >= 0.0359
-    assert wall <= s["budget_s"] + 120 + ask.CROSSED_S
+    assert wall <= s["budget_s"] + 120 + 2 * ask.CROSSED_S
     assert s["beyond"] is not None
     rng = [e for e in s["requests"] if e["flux"] is None][0]
     assert s["flux"] > (rng["verified_lower_bound_Wb"] or 0.0)
