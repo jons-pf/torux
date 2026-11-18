@@ -24,7 +24,8 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
                     traced_chain_lines) where Newton from the family's torus left it with no elliptic line
     unresolved      its closed lines whose residue lies within the error recorded for it (residue_err, torux.orbits.
                     line_monodromy): neither O nor X, and no half width rests on them, so a chain whose lines are
-                    all unresolved has no type and no half width
+                    all unresolved has no type and no half width. lines_unrefined counts those of a stepped-across
+                    chain whose residue the stage had no time left to refine (their error is not known)
     band_Wb         the fluxes (in, out) an island band put round it
     found_in        the stage: 'family' (where the family stalled), 'stepped across' (torux.crossed: a rational the
                     family's iota passed between two of its tori), 'island band' or 'edge barrier'
@@ -268,6 +269,8 @@ def _crossed(c, nfp):
                 out["half_width_Wb"] = room
     if c.get("between_verified") is False:
         out["lines_outside_verified"] = True
+    if c.get("lines_unrefined"):
+        out["lines_unrefined"] = int(c["lines_unrefined"])      # not refined in the stage's time: unresolved
     if c.get("cut"):
         out["cut"] = True
     return out

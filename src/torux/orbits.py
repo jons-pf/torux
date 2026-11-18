@@ -84,11 +84,12 @@ def _cyl(engine, R, Z, phi):
     return R * BR * ib, R * BZ * ib, aRR, aRZ, aZR, aZZ
 
 
-def _line_body(engine, u, nu, phi0, L, K, ngrid, symmetric):
+def _line_body(engine, u, nu, phi0, L, K, ngrid, symmetric, C=None, S=None):
     tt = np.arange(ngrid) / ngrid
     k = np.arange(K + 1)
-    ang = 2 * np.pi * np.outer(tt, k)
-    C, S = jnp.asarray(np.cos(ang)), jnp.asarray(np.sin(ang))
+    if C is None:
+        ang = 2 * np.pi * np.outer(tt, k)
+        C, S = jnp.asarray(np.cos(ang)), jnp.asarray(np.sin(ang))
     kk = jnp.asarray(k.astype(float)) * nu
     w = np.full(K + 1, 2.0 / ngrid); w[0] = 1.0 / ngrid
     wj = jnp.asarray(w)
@@ -139,9 +140,12 @@ def _line_body(engine, u, nu, phi0, L, K, ngrid, symmetric):
 
 
 @partial(jax.jit, static_argnames=("K", "ngrid", "symmetric", "kinds", "chunk"))
-def _line_shared(params, u, nu, phi0, L, K, ngrid, symmetric, kinds, chunk):
+def _line_shared(params, u, nu, phi0, L, C, S, K, ngrid, symmetric, kinds, chunk):
+    # the Fourier basis C, S (ngrid x K + 1) is an argument, not a constant of the compiled function: as constants,
+    # each shape's compiled system kept its own folded copies of it (on Hammond's second wireframe about 0.5 GB a
+    # shape past 900 modes, and the line refinement compiles several shapes a chain)
     from .field.engine import EngineStub
-    return _line_body(EngineStub(params, kinds, chunk), u, nu, phi0, L, K, ngrid, symmetric)
+    return _line_body(EngineStub(params, kinds, chunk), u, nu, phi0, L, K, ngrid, symmetric, C, S)
 
 
 def solve_closed_line(engine, nfp, q, guess_R, guess_Z, phi0=0.0, K=None, symmetric=True, tol=1e-13,
@@ -172,7 +176,8 @@ def solve_closed_line(engine, nfp, q, guess_R, guess_Z, phi0=0.0, K=None, symmet
         bC = (C.T @ Z0) * w
         u = np.concatenate([a, aS[1:], bC, b[1:]])
     if not getattr(engine, "analytic", None):
-        sysj = lambda uu: _line_shared(engine.params, uu, float(nu), float(phi0), float(L), K=K, ngrid=ngrid,
+        Cj, Sj = jnp.asarray(C), jnp.asarray(S)
+        sysj = lambda uu: _line_shared(engine.params, uu, float(nu), float(phi0), float(L), Cj, Sj, K=K, ngrid=ngrid,
                                        symmetric=symmetric, kinds=engine.kinds, chunk=engine.target_chunk)
     else:
         sysj = jax.jit(lambda uu: _line_body(engine, uu, float(nu), float(phi0), float(L), K, ngrid, symmetric))

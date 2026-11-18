@@ -120,13 +120,20 @@ def _line_record(ln, phi=0.0):
 
 
 def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, deadline=None, exclude=(),
-                   verified=None, verbose=False, independent=True):
+                   verified=None, verbose=False, independent=True, refine_s=None):
     """The chains the family `tori` steps across (module docstring), as records (dicts).  exclude: (p, q) left out
     (the chains the family stalled at, analysed already).  verified: a dict index -> (ok, refined torus) shared
     between calls (filled here).  Stops at the deadline: the chains not reached then are listed with their
-    rational and the family tori either side only (cut=True)."""
-    from .chains import chain_lines, pendulum_half_width
-    from .orbits import residue_resolved
+    rational and the family tori either side only (cut=True).
+
+    refine_s (None: each line refined as it is found): the chains' lines are found first, as in torux 0.2.2, and
+    their residues refined (torux.orbits.line_monodromy) afterwards, up to the deadline or refine_s seconds from the
+    end of the finding, whichever is later, the lowest q first: refining takes about as long again as finding, and
+    done line by line in the finding's time it left chains cut short nine times as often as 0.2.2 did (103 against
+    11 of about 730 chains in 72 paired runs on CNT).  A line not reached then keeps
+    its residue as first solved, with residue_err None (not resolved: no type, no half width), and its chain counts
+    it in lines_unrefined."""
+    from .chains import chain_lines
     from .analysis import range_candidate, torus_topology
     verified = {} if verified is None else verified
     t0 = time.time()
@@ -162,6 +169,7 @@ def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, 
         return verified[i]
 
     out = []
+    pending = []
     # the lowest q first, so that a deadline leaves out the finest chains
     for p, q, i in sorted(crossings(tori, nfp, qmax), key=lambda c: (c[1], c[2])):
         if (p, q) in exclude or (-p, q) in exclude:
@@ -200,7 +208,7 @@ def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, 
         start = a if abs(a.iota - iota_r) <= abs(b.iota - iota_r) else b
         info = {}
         try:
-            lines = chain_lines(engine, start, p, q, deadline=deadline, info=info)
+            lines = chain_lines(engine, start, p, q, deadline=deadline, info=info, refine=refine_s is None)
         except Exception as e:  # noqa: BLE001
             lines = []
             rec["lines_error"] = repr(e)
@@ -218,24 +226,48 @@ def crossed_chains(engine, cont, source, tori, axis, dmin, tol, nfp, qmax=QMAX, 
                 away += 1
         if away:
             rec["lines_elsewhere"] = away
-        rec["lines"] = [_line_record(ln) for ln in kept]
-        # (an elliptic line whose residue is resolved above its error: torux.orbits.residue_resolved)
-        O = [ln for ln in kept if 0 < ln.residue < 1 and residue_resolved(ln)]
-        if O and np.isfinite(shear) and shear:
-            RO = max(ln.residue for ln in O)
-            rec["half_width_est"] = pendulum_half_width(RO, q, nfp, shear)
-        if kept and lo is not None and hi is not None:
-            # where the lines lie against the verified tori either side, checked: what makes the interval certified
-            rec["between_verified"] = bool(between(kept, lo[1], hi[1]))
         out.append(rec)
+        pending.append((rec, kept, lo, hi, shear))
+        if refine_s is None:
+            _lines_of(rec, kept, lo, hi, shear, nfp)
         if verbose:
             print(f"   crossed {p}/{q} iota {iota_r:.6f}: family {rec['family_Wb']}, verified "
                   f"{rec.get('inner_Wb')} .. {rec.get('outer_Wb')}, lines {len(kept)} (away {away}), "
                   f"half width {rec.get('half_width_est')}, {time.time() - t0:.1f} s", flush=True)
+    if refine_s is not None:
+        # the lines found, refined now (the lowest q first: pending is in that order)
+        from .orbits import line_monodromy
+        until = max(deadline if deadline is not None else time.time(), time.time() + float(refine_s))
+        for rec, kept, lo, hi, shear in pending:
+            left = 0
+            for i, ln in enumerate(kept):
+                if time.time() < until:
+                    kept[i] = line_monodromy(engine, ln, deadline=until)
+                else:
+                    ln.info["residue_err"] = None
+                    left += 1
+            if left:
+                rec["lines_unrefined"] = left
+            _lines_of(rec, kept, lo, hi, shear, nfp)
     return out
 
 
-def stage(r, source, deadline, qmax=QMAX, verbose=False):
+def _lines_of(rec, kept, lo, hi, shear, nfp):
+    """A chain record's lines, its pendulum half width (from an elliptic line whose residue is resolved above its
+    error: torux.orbits.residue_resolved) and whether its lines lie between the verified tori either side."""
+    from .chains import pendulum_half_width
+    from .orbits import residue_resolved
+    rec["lines"] = [_line_record(ln) for ln in kept]
+    O = [ln for ln in kept if 0 < ln.residue < 1 and residue_resolved(ln)]
+    if O and np.isfinite(shear) and shear:
+        RO = max(ln.residue for ln in O)
+        rec["half_width_est"] = pendulum_half_width(RO, rec["q"], nfp, shear)
+    if kept and lo is not None and hi is not None:
+        # where the lines lie against the verified tori either side, checked: what makes the interval certified
+        rec["between_verified"] = bool(between(kept, lo[1], hi[1]))
+
+
+def stage(r, source, deadline, qmax=QMAX, verbose=False, refine_s=None):
     """The chains the family behind the verified surface of the Result r stepped across (crossed_chains), with the
     time up to deadline: (records, verified tori: r's surface and every family torus the stage verified, axis).
     (None, [], None) when r keeps no family."""
@@ -251,7 +283,7 @@ def stage(r, source, deadline, qmax=QMAX, verbose=False):
     verified = {}
     with _budget.scope(deadline):
         recs = crossed_chains(eng, cont, source, tori, ax, fam["dmin"], fam["tol"], source.nfp, qmax=qmax,
-                              deadline=deadline, verified=verified, verbose=verbose)
+                              deadline=deadline, verified=verified, verbose=verbose, refine_s=refine_s)
     vt = [r.surface] + [t for ok, t in verified.values() if ok and t is not None]
     return recs, vt, ax
 

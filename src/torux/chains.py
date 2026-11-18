@@ -95,12 +95,13 @@ def distinct_crossings(pts, tol=SAME_POINT_M):
     return bool(np.min(d) > tol)
 
 
-def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline=None, info=None):
+def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline=None, info=None, refine=True):
     """Closed lines of the chain p/q started on the torus's curves theta = theta0 + iota_r phi for the
     symmetric starting angles; returns converged, distinct lines with residues, each with q distinct crossings
     (a line of lower period the Newton converged to is left out, counted in info["lower_period"]).
     deadline (absolute, None: none):
-    no start after it and each Newton cut at it (info["cut"] = True then; the lines found so far are returned)."""
+    no start after it and each Newton cut at it (info["cut"] = True then; the lines found so far are returned).
+    refine=False: the lines as first solved, their residues not yet refined (torux.orbits.line_monodromy)."""
     nfp = torus.nfp
     iota_r = p / q * nfp
     starts = []
@@ -134,7 +135,7 @@ def chain_lines(engine, torus: TorusState, p, q, K=None, verbose=False, deadline
                 info["lower_period"] = info.get("lower_period", 0) + 1
             if was is not None:
                 continue
-            ln = OR.line_monodromy(engine, ln, deadline=deadline)
+            ln = OR.line_monodromy(engine, ln, deadline=deadline, refine=refine)
             pts = ln.section_points(0.0)
             seen.append((pts0, "lower period" if not distinct_crossings(pts) else "line"))
             if not distinct_crossings(pts):

@@ -9,7 +9,8 @@ interpolating a surface: the surface returned is the solver's answer to a reques
 res.evidence["search"] says what was asked, what was reached, what stands beyond, the budget and every request
 made, with its outcome and time. search_rows(res) gives the same as a few lines to print. The largest also lists the
 island chains its answer's family stepped across (torux.crossed), in the time its requests left of the budget, or at
-most CROSSED_S past it (CROSSED_SHARE of it, if less) when they left less.
+most CROSSED_S past it (CROSSED_SHARE of it, if less) when they left less, and as long again to refine the residues
+of their lines.
 
 The sizes are VMEC's and SIMSOPT's: the volume enclosed, and sqrt(A / pi) with A the cross-sectional area at
 fixed cylindrical angle averaged over the angle.
@@ -35,8 +36,9 @@ MIN_REQUEST_S = 5.0
 # the largest: requests beyond every flux seen, each twice the last, while each comes back verified
 MAX_BEYOND = 8
 # the largest: the chains the answer's family stepped across (torux.crossed) take what the search left of the budget,
-# and when that is less than the least of these seconds and this share of the budget, that much from the search's end:
-# the search itself is never given less (so its answer is the one it would be without them)
+# and when that is less than the least of these seconds and this share of the budget, that much from the search's end,
+# and then as long again to refine their lines' residues (torux.crossed.crossed_chains, refine_s): the search itself is
+# never given less (so its answer is the one it would be without them)
 CROSSED_S = 90.0
 CROSSED_SHARE = 0.075
 # the largest: where nothing certified bounds what the coils hold and a request's family stalled at a chain its jump
@@ -279,7 +281,8 @@ class _Search:
                         else f"{self.budget:.0f} s, as given")
         if self.after > 0.5:
             budget_words += (f", and {self.after:.0f} s after it for the chains the answer's family stepped across "
-                             f"(at most {min(CROSSED_S, CROSSED_SHARE * self.budget):.0f} s)")
+                             f"(at most about {2 * min(CROSSED_S, CROSSED_SHARE * self.budget):.0f} s: half to find "
+                             "their lines, half to refine their residues)")
         n = len(self.log)
         req_words = (f"requests: {n}, {sum(e['wall_s'] for e in self.log):.0f} s in all "
                      "(answer.evidence['search']['requests'])")
@@ -434,9 +437,11 @@ def _unresolved_words(c):
     if not u:
         return ""
     what = "no type and no half width" if not (c.get("O") or c.get("X")) else "neither O nor X"
+    late = int(c.get("lines_unrefined") or 0)
+    late = f" ({late} of them not refined in the stage's time)" if late else ""
     if len(u) == 1:
-        return f"1 line whose residue lies within its error, so {what}"
-    return f"{len(u)} lines whose residues lie within their errors, so {what}"
+        return f"1 line whose residue lies within its error{late}, so {what}"
+    return f"{len(u)} lines whose residues lie within their errors{late}, so {what}"
 
 
 def _bands_words(b):
@@ -1212,8 +1217,9 @@ def _widths_stage(S, r):
 
 def _crossed_stage(S, r):
     """The chains the answer's family stepped across (torux.crossed), into the answering request's chains, with the
-    time the search left, or CROSSED_S (at most CROSSED_SHARE of the budget) from now when that is less; the tori it
-    verified place every chain of the search."""
+    time the search left, or CROSSED_S (at most CROSSED_SHARE of the budget) from now when that is less, to find
+    their lines, and as long again to refine the residues of those lines; the tori it verified place every chain of
+    the search."""
     from . import crossed as C
     e = getattr(r, "_ask_entry", None)
     if e is None:
@@ -1221,7 +1227,7 @@ def _crossed_stage(S, r):
     t = time.time()
     deadline = max(S.deadline, t + min(CROSSED_S, CROSSED_SHARE * S.budget))
     try:
-        recs, vt, ax = C.stage(r, S.src, deadline)
+        recs, vt, ax = C.stage(r, S.src, deadline, refine_s=min(CROSSED_S, CROSSED_SHARE * S.budget))
     except Exception as ex:  # noqa: BLE001  (the stage costs its chains, never the answer)
         e["crossed"] = dict(error=repr(ex), wall_s=round(time.time() - t, 1))
         S.after = max(0.0, time.time() - S.deadline)
