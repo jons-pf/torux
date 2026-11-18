@@ -31,7 +31,10 @@ edge barrier's (the closed lines it screened beyond the last surface and tried).
     stalled_at      for a chain found in the family: True for the chain the family stalled at, the rational of order
                     q <= torux.crossed.QMAX it meets first beyond its last torus; False for the lowest-order rational
                     further ahead (torux.chains.nearest_rational_ahead), past that one, which the family's jump tried to
-                    cross. merge: True where any request's family stalled at it
+                    cross. merge: True where any request's family stalled at it, with stalled_from, the request whose
+                    family met it first and that family's last torus (family_iota, family_Wb). The row's own numbers
+                    (flux_Wb, family_Wb, family_iota) are those of values_from, which is that request unless another
+                    computed more of the chain (its lines, a half width)
     flux_from       how flux_Wb was had: 'between family tori' (linear in iota between the two tori either side of
                     the chain, family_Wb) or 'extrapolated' (beyond the family's last torus, from the torus at
                     family_Wb with the slope of iota over the family's last step)
@@ -406,13 +409,24 @@ def merge(lists):
             groups.setdefault(_key(c), []).append((k, c))
     out = []
     for key, items in groups.items():
-        k_best, best = max(items, key=lambda kc: (_richness(kc[1]), -kc[0]))
+        # of entries that computed as much, a family's that stalled at the chain first: a request that met another
+        # rational first gives a family torus with that rational between it and this chain
+        rank = lambda kc: (_richness(kc[1]), kc[1]["found_in"] == FAMILY and bool(kc[1].get("stalled_at", True)),
+                           -kc[0])
+        k_best, best = max(items, key=rank)
+        fam = [(k, c) for k, c in items if c["found_in"] == FAMILY]
+        stalled = [(k, c) for k, c in fam if c.get("stalled_at", True)]
         e = {kk: v for kk, v in best.items() if kk not in ("request",)}
         e["found_in"] = list(dict.fromkeys(c["found_in"] for _, c in items))
-        fam = [c for _, c in items if c["found_in"] == FAMILY]
         if fam:
             # the chain some request's family stalled at, met first beyond its last torus
-            e["stalled_at"] = any(c.get("stalled_at", True) for c in fam)
+            e["stalled_at"] = bool(stalled)
+            if stalled:
+                # the family it was met first from: the request, and the transform and flux of its last torus
+                k_s, c_s = (k_best, best) if best["found_in"] == FAMILY and best.get("stalled_at", True) \
+                    else max(stalled, key=rank)
+                e["stalled_from"] = dict(request=k_s, family_iota=(c_s.get("family_iota") or [None])[0],
+                                         family_Wb=(c_s.get("family_Wb") or [None])[0])
         e["found_by"] = sorted(set(k for k, _ in items))
         e["values_from"] = k_best
         out.append(e)

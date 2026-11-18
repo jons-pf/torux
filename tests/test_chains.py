@@ -373,7 +373,38 @@ def test_the_family_stalls_at_the_first_rational_it_meets():
     m = chainlist.merge([(1, [dict(fam[(-2, 13)], request=1)]), (2, [dict(fam[(-2, 13)], stalled_at=True, request=2)])])
     assert m[0]["stalled_at"]
     m = chainlist.merge([(1, [dict(fam[(-2, 13)], request=1)])])
-    assert not m[0]["stalled_at"]
+    assert not m[0]["stalled_at"] and "stalled_from" not in m[0]
+
+
+def test_a_chain_stalled_at_says_from_which_family():
+    """A merged chain whose stalled_at is true has its family numbers from a request whose family stalled at it: CNT
+    at 64 degrees, I_IL / I_PF = 7.0, the no-flux request met -4/29 first and tried -1/7 past it (stalled_at false, its
+    last torus at iota -0.274833, with -4/29 between), a later request stalled at -1/7 itself. In 0.3.0 the row took
+    the first request's numbers, the richer, beside stalled_at true. stalled_from names the request and its last
+    torus, also where the row's numbers are another request's that computed more of the chain."""
+    rec = chain_record(_chain())
+    past = chainlist.of_record(dict(nfp=NFP, chains=[dict(rec, p=-1, q=7, iota_r=-2 / 7, stalled_at=False,
+                                                          shear_at=dict(index=9, n_tori=10, flux=-0.0061,
+                                                                        iota=-0.274833))]))[0]
+    first = chainlist.of_record(dict(nfp=NFP, chains=[dict(rec, p=-1, q=7, iota_r=-2 / 7, stalled_at=True,
+                                                           shear_at=dict(index=9, n_tori=10, flux=-0.0064,
+                                                                         iota=-0.27588))]))[0]
+    assert chainlist._richness(past) == chainlist._richness(first)
+    m = chainlist.merge([(1, [dict(past, request=1)]), (5, [dict(first, request=5)])])[0]
+    assert m["stalled_at"] and m["values_from"] == 5 and m["family_iota"] == [-0.27588]
+    assert m["stalled_from"] == dict(request=5, family_iota=-0.27588, family_Wb=0.0064)
+    assert m["found_by"] == [1, 5]
+    # where the other request computed more (here: lines the stalling one did not find), its numbers and lines stay,
+    # and stalled_from still names the family it was met first from
+    bare = dict(first, O=[], X=[])
+    m = chainlist.merge([(1, [dict(past, request=1)]), (5, [dict(bare, request=5)])])[0]
+    assert m["values_from"] == 1 and m["O"] == past["O"] and m["stalled_from"]["family_iota"] == -0.27588
+    # the numbers a stepped-across chain gives stay, and the family it was met first from is said beside them
+    crossed = dict(p=-1, q=7, iota=-2 / 7, found_in="stepped across", flux_Wb=0.0063, flux_from="between family tori",
+                   family_Wb=[0.0062, 0.0064], O=[dict(residue=0.1)], X=[dict(residue=-0.1)])
+    m = chainlist.merge([(1, [dict(past, request=1)]), (3, [dict(crossed, request=3)]), (5, [dict(first, request=5)])])[0]
+    assert m["values_from"] == 3 and m["flux_from"] == "between family tori" and m["stalled_at"]
+    assert m["stalled_from"]["request"] == 5 and m["stalled_from"]["family_iota"] == -0.27588
 
 
 def test_a_line_outside_a_section_that_folds_back_is_beyond_it():
