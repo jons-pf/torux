@@ -460,7 +460,7 @@ def merge(lists):
 
 
 def _residue_errs(out, c):
-    """Each certificate line's residue_err (a bound on its residue's error, torux.orbits.line_monodromy), where the
+    """Each certificate line's residue_err (an estimate of its residue's error, torux.orbits.line_monodromy), where the
     record keeps one: the X line's, the O line's, the edge barrier's orbit's."""
     src = dict(X=c.get("X_line") if isinstance(c.get("X_line"), dict) else c.get("orbit"), O=c.get("O_line"))
     for ln in out.get("lines") or []:
@@ -486,8 +486,8 @@ def _cert_line(p, q, residue, points, plane_phi, ln=None):
 def provenance(c):
     """What a certificate record (one that holds: ok) rests on, for a reader with a tracer of their own: dict(
     construction, the theorem's name in docs/verification.md's words; lines, the closed field lines it is built on,
-    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane, and residue_err, a
-    bound on the residue's error, where the record keeps one; interval_Wb or bound_Wb). None for a record that does
+    each with p, q, residue, plane_phi and crossings, the line's crossings (R, Z) of that plane, and residue_err, an
+    estimate of the residue's error, where the record keeps one; interval_Wb or bound_Wb). None for a record that does
     not hold. A lost ring rests on no closed line (lines [])."""
     if not isinstance(c, dict) or not c.get("ok"):
         return None
