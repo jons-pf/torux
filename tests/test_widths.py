@@ -252,3 +252,51 @@ def test_cnt_64_degrees_ratio_4_5_brackets_hold_the_traced_layers():
         assert b["inner_Wb"] <= lo + tol and b["outer_Wb"] >= hi - tol, (pq, b)
         assert b["outer_Wb"] - b["inner_Wb"] < b["start_Wb"][1] - b["start_Wb"][0], (pq, b)
     assert a.evidence["search"]["widths"]["surfaces"]
+
+
+def test_with_widths_the_answer_is_the_largest_surface_the_answer_verified(monkeypatch):
+    """A surface the closing in verified beyond the search's largest becomes the answer: its surface, the search's
+    flux, the request that answered, and words that say the search itself had reached less, in no time past
+    widths_s. A surface the closing in verified inside the answer changes nothing."""
+    from torux import api
+    small = _circle(0.10, -0.21)
+    src = types.SimpleNamespace(id="coils", request=None, nfp=NFP, parts=[])
+    monkeypatch.setattr(ask, "_crossed_stage", lambda S, r: None)
+    monkeypatch.setattr(ask, "say", None)
+
+    def run(far_surface):
+        S = ask._Search(src, "largest", None, 100.0, {})
+        f0 = float(small.flux)
+        r = api.Result("surface", 100.0, 0.1, surface=small, iota=-0.21, record=dict(nfp=NFP))
+        S.log.append(dict(flux=f0, purpose="the search", budget_s=100.0, wall_s=1.0,
+                          chains=[dict(_chain(0.07), found_in="stepped across", request=1)]))
+        r._ask_entry = S.log[-1]
+        S.best[f0], S.size_of[f0] = r, ask.size(small)
+        S.widths_asked = (60.0, 1)
+        far = api.Result("surface", 300.0, 20.0, surface=far_surface, iota=float(far_surface.iota),
+                         record=dict(nfp=NFP))
+
+        def stage(S_, r_, secs, jobs=None, verbose=False):
+            S_.widths_largest = (float(far_surface.flux), far, 20.0)
+            return ({}, dict(budget_s=secs, wall_s=1.0, chains=0, two_sided=0, one_sided=0, requests=1, closed=0))
+        monkeypatch.setattr(widths, "stage", stage)
+        return ask._largest_answer(S, f0, stop=None), f0
+
+    big = _circle(0.104, -0.212)
+    res, f0 = run(big)
+    s = res.evidence["search"]
+    assert res.surface is big and s["flux"] == float(big.flux) and s["answered_by"]["request"] == 2
+    assert s["requests"][-1]["purpose"].startswith("the closing in on the chains")
+    assert s["words"][1].startswith(f"reached: {ask._wb(float(big.flux))}")
+    assert any(w.startswith("reached by the closing in on the chains: the search itself had reached "
+                            f"{ask._wb(f0)}") and "none past it" in w for w in s["words"])
+    res, f0 = run(_circle(0.09, -0.20))
+    s = res.evidence["search"]
+    assert res.surface is small and s["flux"] == f0 and len(s["requests"]) == 1
+    assert not any("reached by the closing in" in w for w in s["words"])
+
+
+def test_widths_jobs_without_widths_is_an_error_on_the_command_line(capsys):
+    from torux import cli
+    assert cli.main(["solve", "no-such-coils.json", "--largest", "--widths-jobs", "2"]) == 1
+    assert "--widths-jobs is the requests at once of --widths" in capsys.readouterr().err

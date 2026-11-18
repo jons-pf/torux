@@ -19,9 +19,10 @@ nearest the chain, one each side:
     ..........|  slack  [====================================]  slack  |..........
               |<---------------------- bracket ---------------------->|
 
-so the island and its layer lie inside the bracket: (outer - inner) / 2 bounds the chain's half width from above, and
-(inner + outer) / 2 is its place in flux, both read from verified surfaces only.  A chain with no verified surface
-beyond it is one-sided: its bracket has the inner surface only, with outer None, and none is made up.
+so the island and its layer lie inside the bracket: (outer - inner) / 2 bounds the chain's half width from above,
+read from verified surfaces only.  The chain lies somewhere between the two, not necessarily near the middle.  A
+chain with no verified surface beyond it is one-sided: its bracket has the inner surface only, with outer None, and
+none is made up.
 
 Which side.  A surface's side is decided by the chain's crossings, never by the rotational transform (which orders
 the surfaces only while iota is monotonic in flux).  Each crossing is tested against the surface's section in the
@@ -216,6 +217,7 @@ class Stage:
         self.bound = bound
         self.pending = {}                        # flux -> (chain, side)
         self.other = []                          # (surface, around the axis) verified but not closed in from
+        self.largest = None                      # (flux asked, answer, wall s) of the request of largest flux placed
         self.log = []
         self.chains = [_Chain(c, i) for i, c in enumerate(chains) if chain_lines(c)]
         for t in tori:
@@ -406,6 +408,8 @@ class Stage:
         if ok:
             entry["flux_reached"] = abs(float(ans.surface.flux))
             entry["iota"] = float(ans.surface.iota)
+            if self.largest is None or entry["flux_reached"] > abs(float(self.largest[1].surface.flux)):
+                self.largest = (f, ans, wall)
             placed = self.add(ans.surface, "request")
             entry["placed"] = {f"{c2.entry.get('p')}/{c2.entry.get('q')}": w for c2, w in placed if w is not None}
         else:
@@ -640,6 +644,8 @@ def stage(S, r, widths_s, jobs=None, verbose=False):
     # (the surfaces its requests verified, for holding every chain's band against: torux.bands)
     S.widths_tori = [t.torus for t in st.pool if t.came == "request"] + [t for t, a in st.other if a]
     S.widths_off = [t for t, a in st.other if not a]
+    # (the request of largest flux that verified a surface around the axis: the search's answer when beyond its own)
+    S.widths_largest = st.largest
     surfaces = []
     res = st.results(surfaces)
     two = sum(1 for b in res.values() if b["inner_Wb"] is not None and b["outer_Wb"] is not None
