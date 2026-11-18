@@ -153,6 +153,52 @@ def test_the_largest_search_records_the_chains_its_answer_stepped_across(monkeyp
     assert given[0] == pytest.approx(0.4 * 1200.0, abs=1.0)
 
 
+def test_the_words_say_whose_a_verified_lower_bound_is(monkeypatch):
+    """A chain placed against the no-flux request's verified lower bound, which lies beyond the answer and which no
+    direct request verified again, is said to lie outside that request's torus, named as such, not outside "the
+    verified surface", so that the answer never prints two fluxes as verified surfaces without saying what each is
+    (on CNT at 88 degrees, ratio 2.75: reached 7.543e-4 Wb, and a chain outside the lower bound at 1.967e-3 Wb)."""
+    lower = _circle(0.12, 5.5e-3, -0.25)
+    fam = dict(p=-2, q=9, iota_r=-4 / 9, flux_r=-6.1e-3, shear=-3.0, half_width_est=2e-4,
+               lines=[dict(residue=0.05, section=_ring(0.13, 9))], shear_at=dict(index=7, n_tori=8, flux=-5e-3))
+
+    def request(src, flux, b, o):
+        if flux is None:
+            return api.Result("range", b, 0.1, surface=lower, iota=-0.25, record=dict(
+                nfp=2, chains=[fam], profile=[dict(flux=f, converged=True, bn_off=1e-15)
+                                              for f in (1e-3, 2e-3, 3e-3, 4e-3, 5.5e-3)],
+                range=dict(verified_lower_bound=5.5e-3, verified=True)))
+        if flux <= 4e-3:
+            # a direct request verifies up to 4e-3 Wb and not beyond, not even at the lower bound's own flux
+            t = _circle(0.10 * np.sqrt(flux / 4e-3), flux, -0.21)
+            r = api.Result("surface", b, 0.1, surface=t, iota=-0.21, record=dict(nfp=2, chains=[]))
+            r._family = dict(tori=[t], axis=None, dmin=0.05, tol=3e-15)
+            return r
+        return api.Result("undetermined", b, 0.1, record=dict(nfp=2, chains=[]))
+
+    def stage(r, src, deadline, **kw):
+        return [_crossed_record()], [r.surface, _circle(0.05, 3.4e-4, -0.1721), _circle(0.09, 9.6e-4, -0.1836)], None
+    monkeypatch.setattr(ask, "_request", request)
+    monkeypatch.setattr(ask, "say", None)
+    monkeypatch.setattr(crossed, "stage", stage)
+    monkeypatch.setattr(api, "estimate_budget", lambda src, flux: 300.0 if flux is not None else 600.0)
+    res = ask._largest(types.SimpleNamespace(id="coils", request=None, nfp=2), 1200.0, {})
+    s = res.evidence["search"]
+    assert res.status == "surface" and s["flux"] == 4e-3
+    assert any(e["flux"] == 5.5e-3 and e["status"] == "undetermined" for e in s["requests"])
+    out = {(c["p"], c["q"]): c for c in res.evidence["chains"]}[(-2, 9)]
+    # placed as before: the lower bound is a verified torus and bounds the chain
+    assert out["between_verified_Wb"] == [5.5e-3, None]
+    assert out["placement"]["inner_from"] == ask.LOWER_BOUND + "the no-flux request"
+    words = " ".join(s["words"])
+    assert "reached: 0.004 Wb" in words
+    assert ("its lines outside the no-flux request's verified torus at 0.0055 Wb, not verified again by a direct "
+            "request") in words, words
+    assert "outside the verified surface at 0.0055" not in words
+    # the stepped-across chain, between the answer family's own verified tori, is worded as before
+    assert "between verified surfaces at 0.00034 and 0.00096 Wb" in words
+
+
 def _cnt(tilt_deg, ratio, d=0.313, i_pf=10469.555):
     """CNT's coils (tests/test_chains.py), with I_PF = 10,469.555 A and I_IL = ratio x I_PF."""
     import torux

@@ -216,7 +216,10 @@ class _Search:
                      wall_s=round(time.time() - t, 1), status=r.status)
         ok = verified(r)
         if _verified_torus(r) is not None:
-            self.tori.append(r.surface)
+            # (a verified lower bound, the outermost torus of a request's family, is not the surface of a direct
+            # request: the words say whose it is, torux.bands and _placed)
+            who = "the no-flux request" if flux is None else f"the request at {float(flux):.10g} Wb"
+            self.tori.append((r.surface, "search" if r.status == "surface" else LOWER_BOUND + who))
         if ok and flux is not None:
             sz = size(r.surface)
             entry.update(iota=float(r.iota), **sz)
@@ -326,15 +329,20 @@ class _Search:
         if axis is not None:
             from .analysis import torus_topology
             ok = []
-            for t in mine:
+            for t, w in mine:
                 try:
                     good = bool(torus_topology(t, axis)["ok"])
                 except Exception:  # noqa: BLE001  (a surface whose topology cannot be checked is not placed)
                     good = False
-                (ok if good else off).append(t)
+                (ok if good else off).append((t, w))
             mine = ok
-        return pool((mine, "search"), (self.crossed[0] if self.crossed is not None else [], "stepped across"),
-                    (self.widths_tori, "widths"), (off, "search", False), (self.widths_off, "widths", False))
+        # the direct requests' surfaces first, so that a lower bound a direct request verified again is named as its
+        groups = [([t for t, w in mine if w == "search"], "search"),
+                  (self.crossed[0] if self.crossed is not None else [], "stepped across"),
+                  (self.widths_tori, "widths")]
+        groups += [([t for t, w2 in mine if w2 == w], w) for w in dict.fromkeys(w for _, w in mine if w != "search")]
+        groups += [([t for t, w in off], "search", False), (self.widths_off, "widths", False)]
+        return pool(*groups)
 
     def fit_bands(self, chains):
         """Every chain's band held against every surface the search verified (torux.bands.fit): its summary, or
@@ -388,16 +396,36 @@ def _chain_name(c):
     return f"iota = {Fraction(int(round(io * c['q'])), c['q'])}" if io is not None else f"period {c['q']}"
 
 
+LOWER_BOUND = "verified lower bound of "     # (torux.bands Surface.where of a request's verified lower bound)
+
+
+def _surface_words(x, where):
+    """A verified surface at the flux x, in words that say whose it is when it is not a direct request's."""
+    if where and where.startswith(LOWER_BOUND):
+        who = where[len(LOWER_BOUND):]
+        own = "the no-flux request's verified torus" if who == "the no-flux request" else \
+            f"the verified torus that the family of {who} reached"
+        return f"{own} at {x:.4g} Wb, not verified again by a direct request"
+    if where == "widths":
+        return f"the verified surface at {x:.4g} Wb (a request of the closing in)"
+    return f"the verified surface at {x:.4g} Wb"
+
+
 def _placed(c):
-    """Where a chain lies against the verified surfaces, in words ('' when nothing places it)."""
+    """Where a chain lies against the verified surfaces, in words ('' when nothing places it). A surface that is not
+    a direct request's of the search is named as what it is (torux.bands placement inner_from, outer_from)."""
     iv = c.get("between_verified_Wb")
     if not iv:
         return ""
+    pl = c.get("placement") or {}
+    frm = [pl.get(f"{k}_from") if pl.get(f"{k}_Wb") == v else None for k, v in zip(("inner", "outer"), iv)]
     if iv[0] is not None and iv[1] is not None:
-        return f"between verified surfaces at {iv[0]:.4g} and {iv[1]:.4g} Wb"
+        if not any(f and f != "search" and f != "stepped across" for f in frm):
+            return f"between verified surfaces at {iv[0]:.4g} and {iv[1]:.4g} Wb"
+        return f"between {_surface_words(iv[0], frm[0])} and {_surface_words(iv[1], frm[1])}"
     if iv[0] is not None:
-        return f"outside the verified surface at {iv[0]:.4g} Wb"
-    return f"inside the verified surface at {iv[1]:.4g} Wb"
+        return f"outside {_surface_words(iv[0], frm[0])}"
+    return f"inside {_surface_words(iv[1], frm[1])}"
 
 
 def _unresolved_words(c):
