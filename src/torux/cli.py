@@ -122,6 +122,16 @@ def widths_args(s):
                                                                 "TORUX_THREADS cores of its own (default 1)")
 
 
+def widths_options(a):
+    """torux.solve's widths_s and widths_jobs from --widths and --widths-jobs ({} without them); ValueError for
+    --widths-jobs without --widths."""
+    if a.widths is None:
+        if a.widths_jobs is not None:
+            raise ValueError("--widths-jobs is the requests at once of --widths: give --widths with it")
+        return {}
+    return dict(widths_s=a.widths, widths_jobs=a.widths_jobs)
+
+
 def _say(text):
     print(f"torux: {text}", file=sys.stderr, flush=True)
 
@@ -186,7 +196,7 @@ def _solve(a):
             from .plot import check_path
             check_path(a.plot)
         res = _ask(a, verify=not a.no_verify, trace_lines=a.trace_lines, gradients=a.gradients,
-                   **({} if a.widths is None else dict(widths_s=a.widths, widths_jobs=a.widths_jobs)))
+                   **widths_options(a))
     except Exception as e:  # noqa: BLE001
         print(f"error   {e}", file=sys.stderr)
         return 1

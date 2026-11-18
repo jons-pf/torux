@@ -1043,9 +1043,11 @@ class _Terminal(Exception):
         self.r = r
 
 
-def _largest_answer(S, lo, stop="budget"):
+def _largest_answer(S, lo, stop="budget", stages=True):
     """The answer to the largest: ``lo`` the largest verified flux (None: none), ``stop`` why the search asked no
-    more: 'budget', or words, or None when it ended with time to spare in the ordinary way."""
+    more: 'budget', or words, or None when it ended with time to spare in the ordinary way. ``stages``: the chains
+    the answer's family stepped across and, where asked, the closing in on the chains run after it. When the closing
+    in verified a surface beyond the answer's, that request's surface is the answer, with these words again for it."""
     from .api import Result
     words = []
     fields = dict(flux=lo, beyond=None, outward=[])
@@ -1150,11 +1152,46 @@ def _largest_answer(S, lo, stop="budget"):
                          "(answer.evidence['search']['traced'])")
     if ups:
         fields["no_surface_above_Wb"] = ups[0]
-    if lo is not None:
+    if lo is not None and stages:
         _crossed_stage(S, r)
         if getattr(S, "widths_asked", None) is not None:
             _widths_stage(S, r)
+            f = _widths_beyond(S, lo)
+            if f is not None:
+                return _largest_answer(S, f, stop, stages=False)
+    if not stages and getattr(S, "widths_from", None) is not None:
+        words.insert(1, f"reached by the closing in on the chains: the search itself had reached "
+                        f"{_wb(S.widths_from)}, and a request of the closing in verified this surface beyond it, in "
+                        f"the time of widths_s and none past it (answer.evidence['search']['widths'])")
     return S.finish(r, words, **fields)
+
+
+def _widths_beyond(S, lo):
+    """The flux asked of the closing in's request that verified the surface of largest flux, when that surface lies
+    beyond the search's answer at ``lo``: entered as a request of the search, its surface verified as the search's
+    own (the shipped solver's answer to a direct request at that flux, around the magnetic axis). None otherwise."""
+    got = getattr(S, "widths_largest", None)
+    if got is None:
+        return None
+    f, r, wall = got
+    if r is None or not verified(r) or abs(float(r.surface.flux)) <= lo * (1 + 1e-12):
+        return None
+    f = float(f)
+    sz = size(r.surface)
+    entry = dict(flux=f, purpose="the closing in on the chains: the surface of largest flux it verified, beyond the "
+                                 "search's", budget_s=round(float(r.budget_s), 1),
+                 wall_s=None if wall is None else round(float(wall), 1), status=r.status, iota=float(r.iota), **sz)
+    if not repeatable(r):
+        entry["repeatable"] = False
+        entry["path"] = (r.record or {}).get("path")
+    entry["default_budget"] = bool(r.budget_s >= S.default_budget(f))
+    entry["chains"] = [dict(c, request=len(S.log) + 1) for c in _chains(r)]
+    S.log.append(entry)
+    r._ask_entry = entry
+    S.best[f] = r
+    S.size_of[f] = sz
+    S.widths_from = lo
+    return f
 
 
 def _widths_stage(S, r):
