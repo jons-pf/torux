@@ -7,7 +7,9 @@ on, a certificate's lines) and every line of the chains the answer's family step
     distance_m   |(M - I)^-1 (P^q(x) - x)|: Newton's step from x, the distance from x to the closed line of the map
                  there (M the q-period map's Jacobian at x), or what the map's own error leaves undetermined,
                  |(M - I)^-1| MAP_ERR_M, where that is larger
-    converged    distance_m <= CONVERGED_M
+    converged    distance_m and closure_m both at most CONVERGED_M (Newton's step at the first crossing alone can be
+                 small where the line's unstable direction carries a later crossing farther off: on CNT at 64
+                 degrees, ratio 3.75, a step of 3.8e-7 m and a crossing 1.24e-6 m from the closed line)
 
 with P the period map of torux.barrier.FieldSection (the edge barrier's accurate tracer: Gragg-Bulirsch-Stoer at a
 calibrated step, lines with a large error estimate traced again with more steps) from the plane of x.  A line whose
@@ -32,8 +34,11 @@ line that is still not converged keeps its measure, and torux.chainlist lists it
 (closure_m <= CLOSES_M); otherwise it counts it in lines_not_converged.  The orbits the edge barrier's search found on
 its detection map (orbits_found) are measured and kept as found: most are not converged, and no chain lists them.
 
-No certificate rests on these measures and none is changed by them: a certificate's own lines are measured, never
-moved.
+No certificate rests on these measures and none is changed by them.  The closed line an edge barrier's certificate
+was built on (its orbit) is followed on to its closed line as a screened line is, and put in its place only within
+the certificate's own bound on its distance from the true closed line (the orbit's e_X), so that the certificate
+and the chain list name the line as it is; polished keeps the line as the certificate used it.  A certificate's
+other lines are measured, never moved.
 """
 from __future__ import annotations
 
@@ -81,7 +86,7 @@ def _cert_lines(c, out, seen):
     for k in ("orbit", "O_line", "X_line"):
         ln = c.get(k)
         if isinstance(ln, dict) and _pts(ln) is not None:
-            out.append((ln, _num(ln.get("plane_phi", ph)) or 0.0, None))
+            out.append((ln, _num(ln.get("plane_phi", ph)) or 0.0, "certificate" if k == "orbit" else None))
     for k in ("screened", "orbits_found", "X_orbits"):
         for ln in c.get(k) or []:
             if isinstance(ln, dict) and _pts(ln) is not None:
@@ -92,8 +97,9 @@ def _cert_lines(c, out, seen):
 
 def record_lines(rec):
     """Every closed line a request's record keeps: [(line dict, plane phi, kind)], each dict once; kind 'screened'
-    (an edge barrier's screened line), 'chain' (a chain's line) or None (a certificate's line, or an orbit the edge
-    barrier's search found: measured, never moved)."""
+    (an edge barrier's screened line), 'certificate' (the closed line an edge barrier's certificate was built on),
+    'chain' (a chain's line) or None (a certificate's other lines, or an orbit the edge barrier's search found:
+    measured, never moved)."""
     rec = rec if isinstance(rec, dict) else {}
     out, seen = [], set()
     fams = list(rec.get("chains") or []) + list((rec.get("range_family") or {}).get("chains") or [])
@@ -144,10 +150,16 @@ def distance(step, inv_norm):
     return float(max(step, inv_norm * MAP_ERR_M))
 
 
+def _converged(ln):
+    """distance_m and closure_m both at most CONVERGED_M (module docstring)."""
+    d, c = _num(ln.get("distance_m")), _num(ln.get("closure_m"))
+    return bool(d is not None and c is not None and d <= CONVERGED_M and c <= CONVERGED_M)
+
+
 def _put(ln, closure, step, inv_norm):
     ln["closure_m"] = None if closure is None or not math.isfinite(closure) else float(closure)
     ln["distance_m"] = distance(step, inv_norm)
-    ln["converged"] = bool(ln["distance_m"] is not None and ln["distance_m"] <= CONVERGED_M)
+    ln["converged"] = _converged(ln)
 
 
 def _follow(sec, items):
@@ -234,7 +246,7 @@ def _polish(sec, ln, P, axis_point, until, max_move=None):
     best = _newton(sec, P[0], q, until)
     o = best
     d_new = None if o is None else distance(o.info["step"], o.info["inv_norm"])
-    if d_new is None or not d_new <= CONVERGED_M:
+    if d_new is None or not d_new <= CONVERGED_M or not o.info["closure"] <= CONVERGED_M:
         return False
     d_old = _num(ln.get("distance_m"))
     if d_old is not None and not d_new < d_old:
@@ -245,7 +257,7 @@ def _polish(sec, ln, P, axis_point, until, max_move=None):
         return False
     if max_move is not None and not float(np.linalg.norm(o.pts[0] - P[0])) <= max_move:
         return False
-    if ln.get("p") is not None:
+    if ln.get("p") is not None and max_move is None:
         if axis_point is None or abs(sec.phi0) > 1e-12:
             return False
         try:
@@ -271,7 +283,7 @@ def measure(engine, source, items, axis_point=None, polish_s=POLISH_S, sp=None):
         return
     for ln, _, _ in items:
         if ln.get("closure_m") is not None or ln.get("distance_m") is not None:
-            ln["converged"] = bool(_num(ln.get("distance_m")) is not None and ln["distance_m"] <= CONVERGED_M)
+            ln["converged"] = _converged(ln)
     todo = [t for t in items if "converged" not in t[0]]
     planes = sorted({round(ph, 12) for _, ph, _ in items})
     secs = {}
@@ -294,24 +306,29 @@ def measure(engine, source, items, axis_point=None, polish_s=POLISH_S, sp=None):
                 fol.append((ln, _pts(ln), M))
             _follow(sec, fol)
     until = time.time() + polish_s
-    for ln, ph, kind in sorted(items, key=lambda t: (bool(t[0].get("converged")), len(_pts(t[0])))):
+    for ln, ph, kind in sorted(items, key=lambda t: (t[2] != "certificate", bool(t[0].get("converged")),
+                                                     len(_pts(t[0])))):
         if _to_polish(ln, kind) and time.time() < until:
             sec = secs.get(round(ph, 12))
             if sec is not None:
+                # a certificate's line only within its own bound on its distance from the true closed line
+                move = {"screened": None, "certificate": _num(ln.get("e_X"))}.get(kind, CHAIN_MOVE_M)
                 try:
-                    _polish(sec, ln, _pts(ln), axis_point, until, max_move=None if kind == "screened" else CHAIN_MOVE_M)
+                    _polish(sec, ln, _pts(ln), axis_point, until, max_move=move)
                 except Exception:  # noqa: BLE001  (a line that cannot be polished keeps its measure)
                     pass
 
 
 def _to_polish(ln, kind):
-    """An edge barrier's screened line more than POLISH_ABOVE_M from its closed line (a strongly hyperbolic line's
-    residue changes fast with its place: converged to 1e-6 m, it can still be 1 % off); a chain's line that is not
+    """An edge barrier's screened line, or the line its certificate was built on (with that certificate's e_X), more
+    than POLISH_ABOVE_M from its closed line or not converged (a strongly hyperbolic line's residue changes fast with
+    its place: converged to 1e-6 m, it can still be 1 % off); a chain's line that is not
     converged and does not even close to CLOSES_M, where its residue (|residue| >= 1e-6) leaves Newton a well posed
     step."""
-    if kind == "screened":
+    if kind in ("screened", "certificate"):
         d = _num(ln.get("distance_m"))
-        return d is None or d > POLISH_ABOVE_M
+        return (d is None or d > POLISH_ABOVE_M or not ln.get("converged")) and \
+            (kind == "screened" or _num(ln.get("e_X")) is not None)
     if ln.get("converged") is not False:
         return False
     c, r = _num(ln.get("closure_m")), _num(ln.get("residue"))

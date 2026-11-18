@@ -426,3 +426,113 @@ def test_a_line_outside_a_section_that_folds_back_is_beyond_it():
     ray, fold = types.SimpleNamespace(info=dict(ratio_min=1.2, ratio_mean=1.5)), \
         types.SimpleNamespace(info=dict(ratio_min=0.75, ratio_mean=1.1, outside=True))
     assert sorted([fold, ray], key=_order) == [ray, fold]
+
+
+def test_a_closed_line_moved_to_its_closed_line_is_listed_once_and_converged_means_closed():
+    """An edge barrier's screened line and its certificate's copy of the same closed line, one of them followed on to
+    the closed line by torux.closure and so of another residue (on CNT at 64 degrees, ratio 3.75: -0.6692520091 and
+    -0.6693510760, 2.9e-7 m apart), are one line of the chain: the certificate's is listed and the other left out.
+    And a line is converged only where it also closes to 1e-6 m: Newton's step at the first crossing was 3.8e-7 m
+    there while the line came back 3.3e-6 m away, a later crossing 1.24e-6 m from the closed line."""
+    from torux.closure import CONVERGED_M, _converged
+    pts = _points(8, 0.1)
+    near = [[R + 2.9e-7, Z] for R, Z in pts]
+    cert = dict(kind="edge_barrier", ok=True, certificate="manifold", F_up=0.0064, plane_phi=0.0,
+                orbit=dict(q=8, p=-1, residue=-0.6693503205, points=pts, closure_m=4e-14, distance_m=2e-13,
+                           converged=True, e_X=7e-6),
+                screened=[dict(q=8, p=-1, residue=-0.6693510760, points=near, plane_phi=0.0, closure_m=3e-14,
+                               distance_m=1e-13, converged=True)])
+    got = chainlist.of_record(dict(nfp=NFP, certificate=cert))
+    assert len(got) == 1 and [x["residue"] for x in got[0]["X"]] == [-0.6693503205] and got[0]["O"] == []
+    assert "lines_not_converged" not in got[0]
+    assert chainlist.provenance(cert)["lines"][0]["residue"] == got[0]["X"][0]["residue"]
+    assert not _converged(dict(distance_m=3.77e-7, closure_m=3.30e-6))
+    assert _converged(dict(distance_m=3.77e-7, closure_m=0.5 * CONVERGED_M))
+    # a certificate's line is listed with its chain as the certificate names it, converged or not
+    cert["orbit"].update(residue=-0.6692520091, closure_m=3.3e-6, distance_m=3.77e-7, converged=False)
+    one = chainlist.of_record(dict(nfp=NFP, certificate=cert))[0]
+    assert [x["residue"] for x in one["X"]] == [-0.6692520091] and not one["X"][0]["converged"]
+
+
+def _cnt_file(tmp_path, tilt_deg, ratio, d=0.313):
+    """The CNT coils of the scans (four circles as Fourier coefficients, I_PF = 10,469.555 A) as a coil file."""
+    import json
+    import torux
+    s, c = np.sin(np.radians(tilt_deg / 2)), np.cos(np.radians(tilt_deg / 2))
+    a, ipf = 0.405, 10469.555
+    iil = ratio * ipf
+    coils = [dict(xc=[d, a], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, a * s], zc=[0.0, 0.0], zs=[0.0, -a * c],
+                  current_A=iil),
+             dict(xc=[-d, -a], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, a * s], zc=[0.0, 0.0], zs=[0.0, a * c],
+                  current_A=-iil),
+             dict(xc=[0.0, 1.08], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, 1.08], zc=[0.405, 0.0], zs=[0.0, 0.0],
+                  current_A=-ipf),
+             dict(xc=[0.0, 1.08], xs=[0.0, 0.0], yc=[0.0, 0.0], ys=[0.0, -1.08], zc=[-0.405, 0.0], zs=[0.0, 0.0],
+                  current_A=ipf)]
+    path = tmp_path / f"cnt{tilt_deg}_{ratio}.json"
+    path.write_text(json.dumps(dict(nfp=2, stellarator_symmetric=True, coils=coils)))
+    return torux.load(str(path))
+
+
+# the crossings torux 0.3.0 stored for two lines edge barrier certificates rest on, as the certificates used them
+LINE_64_375 = [
+         [0.31891517837094513, -3.7503901301910204e-07],
+         [0.237393561510188, -0.2742095281662067],
+         [0.10961926699979897, -0.2648492016729938],
+         [0.14545599123741582, -0.13744208576903547],
+         [0.17836688907569137, 5.225078685002128e-07],
+         [0.14545558157815255, 0.13744301102990347],
+         [0.10961938840175539, 0.2648501740724658],
+         [0.23739477912718865, 0.27420846693203305]]
+LINE_88_50 = [
+         [0.29917055123791264, 1.6560222507405829e-07],
+         [0.2634378552596624, -0.08937905522543399],
+         [0.26288147363795283, 0.10288102733060932],
+         [0.2918375003795513, -0.044490587184372876],
+         [0.27919240399812567, -0.01565212207540991],
+         [0.2857205082783338, 0.06473698987573258],
+         [0.2653425560761166, -0.10310795066723656],
+         [0.26593232743180023, 0.07945362129139075],
+         [0.29937054725036255, 0.012767517874409317],
+         [0.2569910698222727, -0.10643828089681498],
+         [0.25699111297935645, 0.10643771879179743],
+         [0.29937080334377597, -0.012765659540548629],
+         [0.26593124851124655, -0.0794569359433473],
+         [0.26534135053037267, 0.10310919697236796],
+         [0.2857222620967397, -0.06473223753989336],
+         [0.2791928728108568, 0.015644524887868896],
+         [0.2918362796647216, 0.044495590518599255],
+         [0.26288157693943925, -0.10288212237962271],
+         [0.2634380601107254, 0.08937732293877745]]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("tilt, ratio, q, p, stored, e_X, truth", [
+    # e_X: at 88 degrees as a run's certificate carried it; at 64 degrees the least it can be, twice Newton's step
+    # (e_X = 2 |(M - I)^-1| (closure + tracing error), at least twice the step |(M - I)^-1 (P^q(x) - x)|)
+    (64, 3.75, 8, -1, -0.6692520091292962, 7.6e-07, -0.6693503205),
+    (88, 5.0, 19, -7, -5.317819601417888, 4.69e-05, -5.317323683)])
+def test_a_certificates_line_is_read_as_it_truly_is(tmp_path, tilt, ratio, q, p, stored, e_X, truth):
+    """CNT at 64 degrees, ratio 3.75 (iota -1/8) and 88 degrees, ratio 5.0 (iota -7/19): torux 0.3.0 called the
+    line each certified bound rests on converged, though it came back 3.3e-6 and 4.0e-6 m away and a later crossing
+    lay 1.24e-6 and 6.7e-6 m from the closed line, its residue 1.5e-4 and 9.3e-5 off (truth: an independent tracer).
+    Such a line is not converged, and torux.closure follows it on to its closed line within the certificate's own
+    bound on its distance from it (e_X, as a run's certificate carried it): the certificate and the chain list then
+    name the one closed line, converged, with its true residue, and its screened copy is not listed beside it."""
+    from torux.closure import CONVERGED_M, measure_record
+    from torux.field import FieldEngine
+    src = _cnt_file(tmp_path, tilt, ratio)
+    P = LINE_64_375 if q == 8 else LINE_88_50
+    assert len(P) == q
+    orbit = dict(q=q, p=p, residue=stored, points=[list(x) for x in P], e_X=e_X)
+    twin = dict(q=q, p=p, residue=stored, points=[list(x) for x in P], plane_phi=0.0)
+    rec = dict(nfp=2, edge_barrier=dict(kind="edge_barrier", ok=True, certificate="manifold", F_up=1.0,
+                                        plane_phi=0.0, orbit=orbit, screened=[twin]))
+    measure_record(FieldEngine(src, dmin=0.05), src, rec, polish_s=300.0)
+    pv = chainlist.provenance(rec["edge_barrier"])["lines"][0]
+    assert pv["converged"] and pv["distance_m"] <= CONVERGED_M and pv["closure_m"] <= CONVERGED_M, pv
+    assert abs(pv["residue"] - truth) <= 2e-6 * abs(truth), pv["residue"]
+    assert pv["polished"]["before"]["residue"] == stored and pv["polished"]["moved_m"] <= e_X
+    got = [c for c in chainlist.of_record(rec) if (c["p"], c["q"]) == (p, q)]
+    assert len(got) == 1 and len(got[0]["O"] + got[0]["X"]) == 1, got
+    assert got[0]["X"][0]["residue"] == pv["residue"] and got[0]["X"][0]["section"] == pv["crossings"]
