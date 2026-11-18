@@ -395,3 +395,29 @@ def test_a_line_outside_a_section_that_folds_back_is_beyond_it():
     ray, fold = types.SimpleNamespace(info=dict(ratio_min=1.2, ratio_mean=1.5)), \
         types.SimpleNamespace(info=dict(ratio_min=0.75, ratio_mean=1.1, outside=True))
     assert sorted([fold, ray], key=_order) == [ray, fold]
+
+
+def test_a_closed_line_moved_to_its_closed_line_is_listed_once_and_converged_means_closed():
+    """An edge barrier's screened line and its certificate's copy of the same closed line, one of them followed on to
+    the closed line by torux.closure and so of another residue (on CNT at 64 degrees, ratio 3.75: -0.6692520091 and
+    -0.6693510760, 2.9e-7 m apart), are one line of the chain: the certificate's is listed and the other left out.
+    And a line is converged only where it also closes to 1e-6 m: Newton's step at the first crossing was 3.8e-7 m
+    there while the line came back 3.3e-6 m away, a later crossing 1.24e-6 m from the closed line."""
+    from torux.closure import CONVERGED_M, _converged
+    pts = _points(8, 0.1)
+    near = [[R + 2.9e-7, Z] for R, Z in pts]
+    cert = dict(kind="edge_barrier", ok=True, certificate="manifold", F_up=0.0064, plane_phi=0.0,
+                orbit=dict(q=8, p=-1, residue=-0.6693503205, points=pts, closure_m=4e-14, distance_m=2e-13,
+                           converged=True, e_X=7e-6),
+                screened=[dict(q=8, p=-1, residue=-0.6693510760, points=near, plane_phi=0.0, closure_m=3e-14,
+                               distance_m=1e-13, converged=True)])
+    got = chainlist.of_record(dict(nfp=NFP, certificate=cert))
+    assert len(got) == 1 and [x["residue"] for x in got[0]["X"]] == [-0.6693503205] and got[0]["O"] == []
+    assert "lines_not_converged" not in got[0]
+    assert chainlist.provenance(cert)["lines"][0]["residue"] == got[0]["X"][0]["residue"]
+    assert not _converged(dict(distance_m=3.77e-7, closure_m=3.30e-6))
+    assert _converged(dict(distance_m=3.77e-7, closure_m=0.5 * CONVERGED_M))
+    # a certificate's line is listed with its chain as the certificate names it, converged or not
+    cert["orbit"].update(residue=-0.6692520091, closure_m=3.3e-6, distance_m=3.77e-7, converged=False)
+    one = chainlist.of_record(dict(nfp=NFP, certificate=cert))[0]
+    assert [x["residue"] for x in one["X"]] == [-0.6692520091] and not one["X"][0]["converged"]

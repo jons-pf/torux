@@ -297,6 +297,28 @@ def _band(c, nfp):
     return out
 
 
+# two records of a chain's closed line whose crossings lie nearer than this (m) are one line: an edge barrier's screened
+# line and its certificate's copy of it, one of them followed on to the closed line by torux.closure and so no longer
+# of the same residue (distinct lines of one chain lie millimetres apart)
+SAME_LINE_M = 1e-5
+
+
+def _listed_already(e, t):
+    """Whether the closed line t (a record with points) is one the chain entry e lists already, in the same plane."""
+    try:
+        P = np.asarray(t.get("points"), float).reshape(-1, 2)
+    except (TypeError, ValueError):
+        return False
+    ph = float(t.get("plane_phi", 0.0) or 0.0)
+    for ln in (e.get("O") or []) + (e.get("X") or []):
+        if not ln.get("section") or float(ln.get("plane_phi", 0.0)) != ph:
+            continue
+        Q = np.asarray(ln["section"], float).reshape(-1, 2)
+        if len(P) and len(Q) and float(np.min(np.linalg.norm(P[:, None, :] - Q[None, :, :], axis=-1))) < SAME_LINE_M:
+            return True
+    return False
+
+
 def _edge(c, nfp):
     """One entry a chain p/q, its lines the edge barrier's: its certificate's orbit, the closed lines it screened
     beyond the last surface (with their crossings) and the candidates it tried for a barrier."""
@@ -318,7 +340,10 @@ def _edge(c, nfp):
             e["lines_of_lower_period"] = e.get("lines_of_lower_period", 0) + 1
             continue
         lines.add((e["p"], e["q"], res))
-        if not _listed(t):
+        if _listed_already(e, t):
+            continue                 # the same closed line again, its residue moved by torux.closure: the first kept
+        if not _listed(t) and not (items and t is items[0] and t.get("ok")):
+            # (the line a certificate that holds was built on is listed as the certificate names it, converged or not)
             e["lines_not_converged"] = e.get("lines_not_converged", 0) + 1
             continue
         e["O" if _elliptic(res) else "X"].append(_line(dict(t, residue=res, points=t.get("points")),
