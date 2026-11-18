@@ -8,7 +8,10 @@ answer verified against every chain by the chain's closed lines' crossings (toru
 surface's section, never by iota), and then:
 
     placement       each chain's placement: inner_Wb and outer_Wb, the verified surfaces nearest it with every counted
-                    crossing outside and inside them, and unplaced, the verified surfaces between them that no
+                    crossing outside and inside them, inner_from and outer_from whose they are ('search' a direct
+                    request's, 'stepped across', 'widths' a request of the closing in's, or a request's verified
+                    lower bound, the outermost torus of its family, which no direct request verified again), and
+                    unplaced, the verified surfaces between them that no
                     crossing places (each crossing nearer the section than the line's accuracy) or that its crossings
                     put on both sides, with the nearest crossing's distance (m).  between_verified_Wb is [inner_Wb,
                     outer_Wb]
@@ -161,6 +164,7 @@ def fit_chain(c, surfaces):
                      **({} if s.around else {"not_around_axis": True}))
                 for s, w, d in sides if w not in ("inner", "outer") and a < s.flux < b]
     pl = dict(inner_Wb=None if lo is None else lo.flux, outer_Wb=None if hi is None else hi.flux,
+              inner_from=None if lo is None else lo.where, outer_from=None if hi is None else hi.where,
               surfaces=len(surfaces), placed=len(ins) + len(outs))
     if unplaced:
         pl["unplaced"] = unplaced
